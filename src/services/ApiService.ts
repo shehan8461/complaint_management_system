@@ -23,6 +23,25 @@ axiosInstance.interceptors.request.use(
       config.headers = config.headers ?? {};
       config.headers['Authorization'] = `Bearer ${token}`;
     }
+    
+    // Inject tenant headers (mirrors JwtInterceptor)
+    const u: any = await SessionStorage.getUserData();
+    if (u) {
+      try {
+        const sabhaId = u?.sabhaId ?? u?.sabhaID ?? u?.SabhaID;
+        const officeId = u?.officeId ?? u?.officeID ?? u?.OfficeID;
+        const orgTypeId = u?.orgTypeId;
+        const companyId = u?.orgId;
+
+        if (sabhaId) config.headers['x-sabha-id'] = sabhaId.toString();
+        if (officeId) config.headers['x-office-id'] = officeId.toString();
+        if (orgTypeId) config.headers['x-org-type-id'] = orgTypeId.toString();
+        if (companyId) config.headers['x-company-id'] = companyId.toString();
+      } catch (e) {
+        // Ignore parse error
+      }
+    }
+
     config.headers[AppConstants.APP_HEADER_KEY] = AppConstants.APP_HEADER_VALUE;
     return config;
   },

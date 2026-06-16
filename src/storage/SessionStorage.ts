@@ -42,10 +42,8 @@ export const SessionStorage = {
 
   /** Clear all auth data (full logout) */
   async clearAll(): Promise<void> {
-    await AsyncStorage.multiRemove([
-      AppConstants.TOKEN_KEY,
-      AppConstants.TOKEN_EXP_KEY,
-      AppConstants.USERDATA_KEY,
-    ]);
+    await AsyncStorage.removeItem(AppConstants.TOKEN_KEY);
+    await AsyncStorage.removeItem(AppConstants.TOKEN_EXP_KEY);
+    await AsyncStorage.removeItem(AppConstants.USERDATA_KEY);
   },
 };
