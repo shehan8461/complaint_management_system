@@ -7,6 +7,7 @@ export interface CMSComplaintListItem {
   id: number;
   complaintNumber: string;
   category: string;
+  serviceName?: string;
   title: string;
   status: number;
   priority: number;
@@ -27,6 +28,7 @@ export interface CMSDashboardSummary {
   resolvedComplaints: number;
   closedComplaints: number;
   overdueComplaints: number;
+  inProgressComplaints?: number;
   criticalComplaints?: number;
   byStatus: Record<string, number>;
   byPriority: Record<string, number>;

@@ -14,6 +14,8 @@ import {
   Alert,
   TouchableWithoutFeedback,
   DeviceEventEmitter,
+  ScrollView,
+  Modal,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -40,6 +42,21 @@ function getStatusDisplay(status: number): { label: string; color: string; bg: s
   }
 }
 
+function getFullStatusLabel(status: number): string {
+  switch (status) {
+    case 1: return 'New';
+    case 2: return 'Assigned to Department Head';
+    case 3: return 'Assigned to Subject';
+    case 4: return 'Reassigned to Department Head';
+    case 5: return 'Admin Check';
+    case 6: return 'Resolved';
+    case 7: return 'Closed';
+    case 8: return 'In Progress';
+    case 9: return 'Awaiting Info';
+    default: return 'Unknown';
+  }
+}
+
 function formatDate(dateString: string) {
   const date = new Date(dateString);
   if (isNaN(date.getTime())) return 'N/A';
@@ -56,6 +73,30 @@ export function DashboardScreen() {
 
   const [stats, setStats] = useState<CMSDashboardSummary | null>(null);
   const [complaints, setComplaints] = useState<CMSComplaintListItem[]>([]);
+
+  const [selectedStatus, setSelectedStatus] = useState<string>('All Statuses');
+  const [selectedService, setSelectedService] = useState<string>('All Services');
+  const [statusOptions, setStatusOptions] = useState<string[]>(['All Statuses']);
+  const [serviceOptions, setServiceOptions] = useState<string[]>(['All Services']);
+  const [activeDropdown, setActiveDropdown] = useState<'status' | 'service' | null>(null);
+  const [dropdownPos, setDropdownPos] = useState<{top: number, left?: number, right?: number, width: number}>({ top: 0, width: 0 });
+  const serviceBtnRef = useRef<any>(null);
+  const statusBtnRef = useRef<any>(null);
+
+  const openDropdown = (type: 'status' | 'service', ref: any) => {
+    ref.current?.measure((x: number, y: number, btnWidth: number, btnHeight: number, pageX: number, pageY: number) => {
+      // If the button is on the right half of the screen, anchor the dropdown to the right edge
+      const isRightSide = pageX + btnWidth / 2 > width / 2;
+      
+      setDropdownPos({ 
+        top: pageY + btnHeight + 4, 
+        left: isRightSide ? undefined : pageX,
+        right: isRightSide ? width - (pageX + btnWidth) : undefined,
+        width: btnWidth
+      });
+      setActiveDropdown(type);
+    });
+  };
 
   // Drawer state
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -109,7 +150,7 @@ export function DashboardScreen() {
       const user = await AuthService.getMe();
       if (user) {
         setUserEmail(user.email || user.username || 'User');
-        setIsAdmin(user.roles?.includes(9) ?? false);
+        setIsAdmin(!!(user.roles?.includes('9') || user.roles?.includes(9)));
       }
 
       // Fetch summary
@@ -117,14 +158,34 @@ export function DashboardScreen() {
       setStats(summary);
 
       // Fetch complaints
-      const isCmsAdmin = user?.roles?.includes(9);
+      const isCmsAdmin = !!(user?.roles?.includes('9') || user?.roles?.includes(9));
       const complaintsData = isCmsAdmin
-        ? await DashboardService.getAllComplaints(1, 20)
-        : await DashboardService.getAssignedComplaints(1, 20);
+        ? await DashboardService.getAllComplaints(1, 100)
+        : await DashboardService.getAssignedComplaints(1, 100);
       
       setComplaints(complaintsData.items || []);
-    } catch (error) {
+
+      // Build dropdown options dynamically based on the dataset
+      const items = complaintsData.items || [];
+      const statuses = Array.from(new Set(items.map(c => getFullStatusLabel(c.status)))).filter(Boolean).sort();
+      const dynamicServices = Array.from(new Set(items.map(c => c.serviceName || c.category))).filter(Boolean).sort();
+      
+      // Ensure "Current Tenant" is always available as an option
+      const services = dynamicServices.includes('Current Tenant') 
+        ? dynamicServices 
+        : ['Current Tenant', ...dynamicServices];
+
+      setStatusOptions(['All Statuses', ...statuses]);
+      setServiceOptions(['All Services', ...services]);
+    } catch (error: any) {
       console.error('[DashboardScreen] Failed to load data:', error);
+      if (error?.response?.status === 401) {
+        Alert.alert(
+          'Session Expired', 
+          'Your session has expired. Please log in again.', 
+          [{ text: 'OK', onPress: () => DeviceEventEmitter.emit('LOGOUT') }]
+        );
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -142,8 +203,57 @@ export function DashboardScreen() {
 
   // ─── Renderers ─────────────────────────────────────────────────────────────
 
-  const renderHeader = () => (
-    <View style={styles.header}>
+  const getFilteredComplaints = () => {
+    return complaints.filter(c => {
+      const fullStatusLabel = getFullStatusLabel(c.status);
+      const matchesStatus = selectedStatus === 'All Statuses' || fullStatusLabel === selectedStatus;
+      
+      const serviceLabel = c.serviceName || c.category;
+      const matchesService = selectedService === 'All Services' || serviceLabel === selectedService;
+
+      return matchesStatus && matchesService;
+    });
+  };
+
+  const getDashboardStatusGroup = (status?: string) => {
+    const compact = (status || '').toLowerCase().replace(/[\s_-]/g, '');
+    if (compact === 'resolved') return 'resolved';
+    if (compact === 'closed') return 'closed';
+    if (compact === 'new') return 'new';
+    return 'in-progress';
+  };
+
+  const getCalculatedStats = () => {
+    let pending = 0;
+    let inProgress = 0;
+    let resolved = 0;
+
+    if (stats?.byStatus && Object.keys(stats.byStatus).length > 0) {
+      Object.entries(stats.byStatus).forEach(([status, count]) => {
+        const group = getDashboardStatusGroup(status);
+        if (group === 'resolved' || group === 'closed') resolved += count;
+        else if (group === 'new') pending += count;
+        else inProgress += count;
+      });
+    } else {
+      pending = stats?.pendingComplaints ?? 0;
+      resolved = stats?.resolvedComplaints ?? 0;
+      inProgress = stats?.inProgressComplaints ?? 0;
+    }
+
+    return {
+      total: stats?.totalComplaints ?? 0,
+      critical: stats?.criticalComplaints ?? 0,
+      pending,
+      inProgress,
+      resolved
+    };
+  };
+
+  const renderHeader = () => {
+    const calcStats = getCalculatedStats();
+    return (
+      <View style={styles.header}>
       <View style={styles.headerTopRow}>
         <TouchableOpacity style={styles.menuButton} onPress={toggleDrawer}>
           <Text style={styles.menuIcon}>☰</Text>
@@ -156,36 +266,120 @@ export function DashboardScreen() {
 
       {/* Stat Cards Grid */}
       {stats && (
-        <View style={styles.statsGrid}>
-          <View style={[styles.statCard, { borderLeftColor: '#ef4444' }]}>
-            <Text style={styles.statLabel}>Critical</Text>
-            <Text style={styles.statValue}>{stats.criticalComplaints ?? 0}</Text>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          contentContainerStyle={styles.statsGrid}
+        >
+          {/* Critical Card */}
+          <View style={styles.statCardCompact}>
+            <View style={styles.statCardTop}>
+              <View style={[styles.statIconCircle, { backgroundColor: '#fef2f2' }]}>
+                <Text style={{ fontSize: 14 }}>⚠</Text>
+              </View>
+              <View style={[styles.statChip, { backgroundColor: '#fef2f2' }]}>
+                <Text style={[styles.statChipText, { color: '#ef4444' }]}>PRIORITY</Text>
+              </View>
+            </View>
+            <Text style={styles.statValueCompact}>{calcStats.critical}</Text>
+            <Text style={styles.statLabelCompact}>Critical</Text>
+            <View style={styles.statProgressBlockCompact}>
+              <View style={styles.progressBarBgCompact}>
+                <View style={[styles.progressBarFill, { backgroundColor: '#ef4444', width: `${calcStats.total ? (calcStats.critical / calcStats.total) * 100 : 0}%` }]} />
+              </View>
+              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.critical / calcStats.total) * 100) : 0}% of total</Text>
+            </View>
           </View>
-          <View style={[styles.statCard, { borderLeftColor: '#f59e0b' }]}>
-            <Text style={styles.statLabel}>Pending</Text>
-            <Text style={styles.statValue}>{stats.pendingComplaints ?? 0}</Text>
+
+          {/* Pending Card */}
+          <View style={styles.statCardCompact}>
+            <View style={styles.statCardTop}>
+              <View style={[styles.statIconCircle, { backgroundColor: '#fff7ed' }]}>
+                <Text style={{ fontSize: 14 }}>⏱</Text>
+              </View>
+              <View style={[styles.statChip, { backgroundColor: '#fff7ed' }]}>
+                <Text style={[styles.statChipText, { color: '#f97316' }]}>OPEN</Text>
+              </View>
+            </View>
+            <Text style={styles.statValueCompact}>{calcStats.pending}</Text>
+            <Text style={styles.statLabelCompact}>Pending</Text>
+            <View style={styles.statProgressBlockCompact}>
+              <View style={styles.progressBarBgCompact}>
+                <View style={[styles.progressBarFill, { backgroundColor: '#f97316', width: `${calcStats.total ? (calcStats.pending / calcStats.total) * 100 : 0}%` }]} />
+              </View>
+              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.pending / calcStats.total) * 100) : 0}% of total</Text>
+            </View>
           </View>
-          <View style={[styles.statCard, { borderLeftColor: '#3b82f6' }]}>
-            <Text style={styles.statLabel}>Total</Text>
-            <Text style={styles.statValue}>{stats.totalComplaints ?? 0}</Text>
+
+          {/* In Progress Card */}
+          <View style={styles.statCardCompact}>
+            <View style={styles.statCardTop}>
+              <View style={[styles.statIconCircle, { backgroundColor: '#eef2ff' }]}>
+                <Text style={{ fontSize: 14 }}>📋</Text>
+              </View>
+              <View style={[styles.statChip, { backgroundColor: '#eef2ff' }]}>
+                <Text style={[styles.statChipText, { color: '#6366f1' }]}>ACTIVE</Text>
+              </View>
+            </View>
+            {/* @ts-ignore - inProgressComplaints might not be typed yet */}
+            <Text style={styles.statValueCompact}>{calcStats.inProgress}</Text>
+            <Text style={styles.statLabelCompact}>In Progress</Text>
+            <View style={styles.statProgressBlockCompact}>
+              <View style={styles.progressBarBgCompact}>
+                {/* @ts-ignore */}
+                <View style={[styles.progressBarFill, { backgroundColor: '#6366f1', width: `${calcStats.total ? (calcStats.inProgress / calcStats.total) * 100 : 0}%` }]} />
+              </View>
+              {/* @ts-ignore */}
+              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.inProgress / calcStats.total) * 100) : 0}% of total</Text>
+            </View>
           </View>
-          <View style={[styles.statCard, { borderLeftColor: '#10b981' }]}>
-            <Text style={styles.statLabel}>Resolved</Text>
-            <Text style={styles.statValue}>{stats.resolvedComplaints ?? 0}</Text>
+
+          {/* Resolved Card */}
+          <View style={styles.statCardCompact}>
+            <View style={styles.statCardTop}>
+              <View style={[styles.statIconCircle, { backgroundColor: '#ecfdf5' }]}>
+                <Text style={{ fontSize: 14 }}>✓</Text>
+              </View>
+              <View style={[styles.statChip, { backgroundColor: '#ecfdf5' }]}>
+                <Text style={[styles.statChipText, { color: '#10b981' }]}>RATE</Text>
+              </View>
+            </View>
+            <Text style={styles.statValueCompact}>{calcStats.resolved}</Text>
+            <Text style={styles.statLabelCompact}>Resolved</Text>
+            <View style={styles.statProgressBlockCompact}>
+              <View style={styles.progressBarBgCompact}>
+                <View style={[styles.progressBarFill, { backgroundColor: '#10b981', width: `${calcStats.total ? (calcStats.resolved / calcStats.total) * 100 : 0}%` }]} />
+              </View>
+              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.resolved / calcStats.total) * 100) : 0}% res rate</Text>
+            </View>
           </View>
-        </View>
+        </ScrollView>
       )}
 
       <View style={styles.listHeaderRow}>
         <Text style={styles.listHeaderTitle}>Recent Complaints</Text>
-        <TouchableOpacity>
-          <Text style={styles.viewAllText}>View All</Text>
+      </View>
+      <View style={styles.filtersRow}>
+        <TouchableOpacity 
+          ref={serviceBtnRef}
+          style={styles.filterDropdownBtn}
+          onPress={() => openDropdown('service', serviceBtnRef)}
+        >
+          <Text style={styles.filterDropdownText} numberOfLines={1}>{selectedService} ▼</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          ref={statusBtnRef}
+          style={styles.filterDropdownBtn}
+          onPress={() => openDropdown('status', statusBtnRef)}
+        >
+          <Text style={styles.filterDropdownText} numberOfLines={1}>{selectedStatus} ▼</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
+};
 
-  const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
+const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
     const statusInfo = getStatusDisplay(item.status);
     return (
       <TouchableOpacity style={styles.complaintCard} activeOpacity={0.7}>
@@ -218,8 +412,50 @@ export function DashboardScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f9fafb" />
+      
+      {/* Dropdown Modal */}
+      <Modal visible={activeDropdown !== null} transparent animationType="fade">
+        <TouchableWithoutFeedback onPress={() => setActiveDropdown(null)}>
+          <View style={styles.dropdownOverlayAbsolute}>
+            <View style={[
+              styles.dropdownMenuAbsolute, 
+              { 
+                top: dropdownPos.top, 
+                width: dropdownPos.width,
+                ...(dropdownPos.left !== undefined ? { left: dropdownPos.left } : {}),
+                ...(dropdownPos.right !== undefined ? { right: dropdownPos.right } : {})
+              }
+            ]}>
+              <ScrollView style={{ maxHeight: 300 }}>
+                {(activeDropdown === 'status' ? statusOptions : serviceOptions).map(option => {
+                  const isActive = (activeDropdown === 'status' ? selectedStatus : selectedService) === option;
+                  return (
+                    <TouchableOpacity 
+                      key={option} 
+                      style={styles.dropdownItemCentered}
+                      onPress={() => {
+                        if (activeDropdown === 'status') setSelectedStatus(option);
+                        else setSelectedService(option);
+                        setActiveDropdown(null);
+                      }}
+                    >
+                      <Text style={[
+                        styles.dropdownItemTextCentered, 
+                        isActive && styles.dropdownItemTextActive
+                      ]}>
+                        {option}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
       <FlatList
-        data={complaints}
+        data={getFilteredComplaints()}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderComplaintItem}
         ListHeaderComponent={renderHeader}
@@ -336,33 +572,74 @@ const styles = StyleSheet.create({
   },
   statsGrid: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 24,
+    paddingBottom: 24,
+    gap: 12,
+    paddingRight: 16, // So the last card doesn't stick to the edge
   },
-  statCard: {
-    width: '48%',
+  statCardCompact: {
+    width: 150, // Fixed width for horizontal scrolling
     backgroundColor: '#ffffff',
-    padding: 16,
     borderRadius: 12,
-    marginBottom: 12,
-    borderLeftWidth: 4,
+    padding: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
   },
-  statLabel: {
-    fontSize: 13,
-    color: '#6b7280',
+  statCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  statIconCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statLabelCompact: {
+    fontSize: 11,
     fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 8,
   },
-  statValue: {
-    fontSize: 24,
+  statChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  statChipText: {
+    fontSize: 8,
+    fontWeight: '800',
+  },
+  statValueCompact: {
+    fontSize: 20,
     fontWeight: '800',
     color: '#111827',
-    marginTop: 8,
+    marginBottom: 2,
+  },
+  statProgressBlockCompact: {
+    marginTop: 'auto',
+  },
+  progressBarBgCompact: {
+    height: 3,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 1.5,
+    marginBottom: 4,
+  },
+  progressBarFill: {
+    height: 3,
+    borderRadius: 1.5,
+  },
+  statMetaCompact: {
+    fontSize: 10,
+    color: '#9ca3af',
+    fontWeight: '500',
   },
   listHeaderRow: {
     flexDirection: 'row',
@@ -374,6 +651,60 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#111827',
+  },
+  filtersRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 0,
+    marginBottom: 12,
+    gap: 8,
+  },
+  filterDropdownBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  filterDropdownText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  dropdownOverlayAbsolute: {
+    flex: 1,
+  },
+  dropdownMenuAbsolute: {
+    position: 'absolute',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  dropdownItemCentered: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  dropdownItemTextCentered: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#4b5563',
+    textAlign: 'center',
+  },
+  dropdownItemTextActive: {
+    color: '#2563eb',
+    fontWeight: '700',
   },
   viewAllText: {
     fontSize: 14,
