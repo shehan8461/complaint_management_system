@@ -254,16 +254,6 @@ export function DashboardScreen() {
     const calcStats = getCalculatedStats();
     return (
       <View style={styles.header}>
-      <View style={styles.headerTopRow}>
-        <TouchableOpacity style={styles.menuButton} onPress={toggleDrawer}>
-          <Text style={styles.menuIcon}>☰</Text>
-        </TouchableOpacity>
-        <View>
-          <Text style={styles.headerTitle}>Complaints Overview</Text>
-          <Text style={styles.headerSubtitle}>Welcome back, {userEmail}</Text>
-        </View>
-      </View>
-
       {/* Stat Cards Grid */}
       {stats && (
         <ScrollView 
@@ -454,6 +444,18 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
         </TouchableWithoutFeedback>
       </Modal>
 
+      <View style={styles.headerTopRow}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity style={styles.menuButton} onPress={toggleDrawer}>
+            <Text style={styles.menuIcon}>☰</Text>
+          </TouchableOpacity>
+          <Image source={require('../../assets/logos/cat20.png')} style={styles.headerLogo} resizeMode="contain" />
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={styles.headerSubtitle}>{userEmail}</Text>
+        </View>
+      </View>
+
       <FlatList
         data={getFilteredComplaints()}
         keyExtractor={(item) => item.id.toString()}
@@ -465,6 +467,13 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>Inbox</Text>
             <Text style={styles.emptyText}>No complaints found.</Text>
+          </View>
+        }
+        ListFooterComponent={
+          <View style={styles.footerContainer}>
+            <Text style={styles.footerText}>
+              {new Date().getFullYear()}© All Rights Reserved - CAT20.CMS
+            </Text>
           </View>
         }
       />
@@ -517,11 +526,11 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#F8FAFC',
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#F8FAFC',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -540,34 +549,42 @@ const styles = StyleSheet.create({
   },
   headerTopRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    backgroundColor: '#0F4C81',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a24',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  headerLogo: {
+    width: 160,
+    height: 48,
+    marginLeft: 0,
   },
   menuButton: {
-    marginRight: 16,
+    marginRight: 12,
     padding: 8,
-    backgroundColor: '#ffffff',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
   },
   menuIcon: {
     fontSize: 20,
-    color: '#111827',
+    color: '#ffffff',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#111827',
+    color: '#ffffff',
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: 'rgba(255, 255, 255, 0.8)',
     marginTop: 4,
   },
   statsGrid: {
@@ -640,12 +657,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#9ca3af',
     fontWeight: '500',
-  },
-  listHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
   },
   listHeaderTitle: {
     fontSize: 18,
@@ -783,6 +794,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#6b7280',
   },
+  footerContainer: {
+    backgroundColor: '#ffffff',
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    marginTop: 20,
+    borderRadius: 12,
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    fontWeight: '500',
+  },
 
   // ─── Custom Drawer Styles ───
   overlay: {
@@ -812,6 +838,7 @@ const styles = StyleSheet.create({
   drawerHeader: {
     alignItems: 'center',
     paddingVertical: 30,
+    backgroundColor: '#0F4C81',
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
     marginBottom: 10,
@@ -824,7 +851,7 @@ const styles = StyleSheet.create({
   drawerTitle: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#111827',
+    color: '#ffffff',
   },
   drawerLinksContainer: {
     flex: 1,
@@ -846,7 +873,7 @@ const styles = StyleSheet.create({
   drawerLinkTextActive: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#2563eb',
+    color: '#2563EB',
   },
   drawerFooter: {
     padding: 16,
