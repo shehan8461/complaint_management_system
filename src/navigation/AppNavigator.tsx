@@ -11,11 +11,13 @@ import { SessionStorage } from '../storage/SessionStorage';
 export type RootStackParamList = {
   Login: undefined;
   Dashboard: undefined;
+  ComplaintDetail: { complaintNumber: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 import { DashboardScreen } from '../screens/dashboard/DashboardScreen';
+import { ComplaintDetailScreen } from '../screens/dashboard/ComplaintDetailScreen';
 
 // ─── Navigator ───────────────────────────────────────────────────────────────
 
@@ -50,7 +52,10 @@ export function AppNavigator() {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {isLoggedIn ? (
-          <Stack.Screen name="Dashboard" component={DashboardScreen} />
+          <>
+            <Stack.Screen name="Dashboard" component={DashboardScreen} />
+            <Stack.Screen name="ComplaintDetail" component={ComplaintDetailScreen} />
+          </>
         ) : (
           <Stack.Screen name="Login">
             {() => <LoginScreen onLoginSuccess={() => setIsLoggedIn(true)} />}

@@ -66,6 +66,7 @@ function formatDate(dateString: string) {
 // ─── Components ──────────────────────────────────────────────────────────────
 
 export function DashboardScreen() {
+  const navigation = useNavigation<any>();
   const [userEmail, setUserEmail] = useState('User');
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -372,9 +373,9 @@ export function DashboardScreen() {
 const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
     const statusInfo = getStatusDisplay(item.status);
     return (
-      <TouchableOpacity style={styles.complaintCard} activeOpacity={0.7}>
+      <View style={styles.complaintCard}>
         <View style={styles.complaintHeader}>
-          <Text style={styles.complaintNumber}>{item.complaintNumber}</Text>
+          <Text style={styles.complaintNumber}>{(item.complaintNumber || (item as any).ticketNo || (item as any).TicketNo)}</Text>
           <View style={[styles.badge, { backgroundColor: statusInfo.bg }]}>
             <Text style={[styles.badgeText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
           </View>
@@ -386,7 +387,19 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
           <Text style={styles.complaintCategory} numberOfLines={1}>{item.category}</Text>
           <Text style={styles.complaintDate}>{formatDate(item.createdAt)}</Text>
         </View>
-      </TouchableOpacity>
+        <View style={styles.complaintActionRow}>
+          <TouchableOpacity 
+            style={styles.viewButton} 
+            activeOpacity={0.7}
+            onPress={() => {
+              const ticketNo = item.complaintNumber || (item as any).ticketNo || (item as any).TicketNo;
+              navigation.navigate('ComplaintDetail', { complaintNumber: ticketNo });
+            }}
+          >
+            <Text style={styles.viewButtonText}>View Details</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   };
 
@@ -780,6 +793,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9ca3af',
     fontWeight: '500',
+  },
+  complaintActionRow: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    paddingTop: 12,
+    alignItems: 'flex-end',
+  },
+  viewButton: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  viewButtonText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
   },
   emptyState: {
     padding: 40,
