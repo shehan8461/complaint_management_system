@@ -35,6 +35,7 @@ export interface CMSComplaintDetail extends CMSComplaintListItem {
   attachments?: any[];
   comments?: any[];
   statusHistory?: any[];
+  assignments?: any[];
   assignedTo?: string;
   resolutionDueAt?: string;
 }
@@ -64,6 +65,30 @@ export interface CMSApiResponse<T> {
   data: T;
   message?: string;
   success: boolean;
+}
+
+export interface CMSUser {
+  id: number;
+  nameWithInitials: string;
+  username: string;
+  roleId?: number;
+  roleName?: string;
+  departmentId?: number | null;
+}
+
+export interface CMSDepartment {
+  id: number;
+  department: string;
+}
+
+export interface CMSAssignComplaintPayload {
+  toUserId: number;
+  toUserName?: string | null;
+  toRole: number;
+  toOrgUnitId?: number | null;
+  remarks?: string | null;
+  isReassignment?: boolean;
+  resolutionDueAt?: string | null;
 }
 
 export const DashboardService = {
@@ -155,6 +180,61 @@ export const DashboardService = {
           url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || ''),
         })),
       })),
+      assignments: source.assignments || source.Assignments || [],
     } as CMSComplaintDetail;
   },
+
+  /**
+   * Fetch all CMS users
+   */
+  async getCmsUsers(): Promise<CMSUser[]> {
+    const response = await ApiService.get<any>('/users/cms-users');
+    const users = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+    
+    return users.map((u: any) => ({
+      id: u.id || u.ID,
+      nameWithInitials: u.nameWithInitials || u.NameWithInitials || u.username || u.Username,
+      username: u.username || u.Username,
+      roleId: u.roleId || u.RoleId,
+      roleName: u.roleName || u.RoleName || 'Unknown',
+      departmentId: u.departmentId || u.DepartmentId || null
+    }));
+  },
+
+  /**
+   * Fetch all CMS Departments
+   */
+  async getDepartments(): Promise<CMSDepartment[]> {
+    const response = await ApiService.get<any>('/control/officeDepartement/GetAllForContext');
+    const depts = Array.isArray(response.data) ? response.data : (response.data?.data || []);
+    return depts.map((d: any) => ({
+      id: d.id || d.Id,
+      department: d.department || d.Department || 'Unknown'
+    }));
+  },
+
+  /**
+   * Assign a complaint
+   */
+  async assignComplaint(id: number, payload: CMSAssignComplaintPayload): Promise<CMSComplaintDetail> {
+    const requestPayload = {
+      ToUserId: payload.toUserId,
+      ToUserName: payload.toUserName || null,
+      ToRole: payload.toRole,
+      ToOrgUnitId: payload.toOrgUnitId || null,
+      Remarks: payload.remarks || null,
+      IsReassignment: payload.isReassignment || false,
+      ResolutionDueAt: payload.resolutionDueAt || null
+    };
+
+    const response = await ApiService.post<CMSApiResponse<any>>(`/cms/complaints/${id}/assign`, requestPayload);
+    return response.data as unknown as CMSComplaintDetail;
+  },
+
+  /**
+   * Update complaint status (e.g. resolve)
+   */
+  async updateComplaintStatus(id: number, payload: { status: number; remarks?: string; resolutionSummary?: string; feedbackRating?: number | null; feedbackComment?: string | null }): Promise<void> {
+    await ApiService.post<CMSApiResponse<any>>(`/cms/complaints/${id}/status`, payload);
+  }
 };

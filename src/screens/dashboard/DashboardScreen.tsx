@@ -16,6 +16,7 @@ import {
   DeviceEventEmitter,
   ScrollView,
   Modal,
+  TextInput,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,7 +30,7 @@ const DRAWER_WIDTH = width * 0.75;
 
 function getStatusDisplay(status: number): { label: string; color: string; bg: string } {
   switch (status) {
-    case 1: return { label: 'New', color: '#b91c1c', bg: '#fef2f2' }; // Red
+    case 1: return { label: 'Pending', color: '#f97316', bg: '#fff7ed' }; // Orange
     case 2:
     case 3:
     case 4:
@@ -44,7 +45,7 @@ function getStatusDisplay(status: number): { label: string; color: string; bg: s
 
 function getFullStatusLabel(status: number): string {
   switch (status) {
-    case 1: return 'New';
+    case 1: return 'Pending (Unassigned)';
     case 2: return 'Assigned to Department Head';
     case 3: return 'Assigned to Subject';
     case 4: return 'Reassigned to Department Head';
@@ -77,10 +78,13 @@ export function DashboardScreen() {
 
   const [selectedStatus, setSelectedStatus] = useState<string>('All Statuses');
   const [selectedService, setSelectedService] = useState<string>('All Services');
+  const [selectedStatGroup, setSelectedStatGroup] = useState<string | null>(null);
+
   const [statusOptions, setStatusOptions] = useState<string[]>(['All Statuses']);
   const [serviceOptions, setServiceOptions] = useState<string[]>(['All Services']);
-  const [activeDropdown, setActiveDropdown] = useState<'status' | 'service' | null>(null);
-  const [dropdownPos, setDropdownPos] = useState<{top: number, left?: number, right?: number, width: number}>({ top: 0, width: 0 });
+  const [activeDropdown, setActiveDropdown] = useState<'service' | 'status' | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dropdownPos, setDropdownPos] = useState<{ top: number, left?: number, right?: number, width: number }>({ top: 0, width: 0 });
   const serviceBtnRef = useRef<any>(null);
   const statusBtnRef = useRef<any>(null);
 
@@ -88,9 +92,9 @@ export function DashboardScreen() {
     ref.current?.measure((x: number, y: number, btnWidth: number, btnHeight: number, pageX: number, pageY: number) => {
       // If the button is on the right half of the screen, anchor the dropdown to the right edge
       const isRightSide = pageX + btnWidth / 2 > width / 2;
-      
-      setDropdownPos({ 
-        top: pageY + btnHeight + 4, 
+
+      setDropdownPos({
+        top: pageY + btnHeight + 4,
         left: isRightSide ? undefined : pageX,
         right: isRightSide ? width - (pageX + btnWidth) : undefined,
         width: btnWidth
@@ -107,7 +111,7 @@ export function DashboardScreen() {
   const toggleDrawer = useCallback(() => {
     const toValue = isDrawerOpen ? -DRAWER_WIDTH : 0;
     const overlayToValue = isDrawerOpen ? 0 : 1;
-    
+
     // Toggle state right away for touch events, or after animation for closing
     if (!isDrawerOpen) setIsDrawerOpen(true);
 
@@ -130,8 +134,8 @@ export function DashboardScreen() {
   const handleLogout = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
-      { 
-        text: 'Sign Out', 
+      {
+        text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
           try {
@@ -163,27 +167,31 @@ export function DashboardScreen() {
       const complaintsData = isCmsAdmin
         ? await DashboardService.getAllComplaints(1, 100)
         : await DashboardService.getAssignedComplaints(1, 100);
-      
+
       setComplaints(complaintsData.items || []);
 
       // Build dropdown options dynamically based on the dataset
       const items = complaintsData.items || [];
       const statuses = Array.from(new Set(items.map(c => getFullStatusLabel(c.status)))).filter(Boolean).sort();
       const dynamicServices = Array.from(new Set(items.map(c => c.serviceName || c.category))).filter(Boolean).sort();
-      
+
       // Ensure "Current Tenant" is always available as an option
-      const services = dynamicServices.includes('Current Tenant') 
-        ? dynamicServices 
+      const services = dynamicServices.includes('Current Tenant')
+        ? dynamicServices
         : ['Current Tenant', ...dynamicServices];
 
-      setStatusOptions(['All Statuses', ...statuses]);
+      const finalStatuses = statuses.includes('Pending (Unassigned)')
+        ? statuses
+        : ['Pending (Unassigned)', ...statuses];
+
+      setStatusOptions(['All Statuses', ...finalStatuses]);
       setServiceOptions(['All Services', ...services]);
     } catch (error: any) {
       console.error('[DashboardScreen] Failed to load data:', error);
       if (error?.response?.status === 401) {
         Alert.alert(
-          'Session Expired', 
-          'Your session has expired. Please log in again.', 
+          'Session Expired',
+          'Your session has expired. Please log in again.',
           [{ text: 'OK', onPress: () => DeviceEventEmitter.emit('LOGOUT') }]
         );
       }
@@ -208,19 +216,37 @@ export function DashboardScreen() {
     return complaints.filter(c => {
       const fullStatusLabel = getFullStatusLabel(c.status);
       const matchesStatus = selectedStatus === 'All Statuses' || fullStatusLabel === selectedStatus;
-      
+
       const serviceLabel = c.serviceName || c.category;
       const matchesService = selectedService === 'All Services' || serviceLabel === selectedService;
 
-      return matchesStatus && matchesService;
+      const ticketNo = (c.complaintNumber || (c as any).ticketNo || (c as any).TicketNo || '').toString().toLowerCase();
+      const matchesSearch = searchQuery === '' || ticketNo.includes(searchQuery.toLowerCase());
+
+      let matchesStatGroup = true;
+      if (selectedStatGroup) {
+        const group = getDashboardStatusGroup(fullStatusLabel);
+        if (selectedStatGroup === 'Critical') {
+          matchesStatGroup = group !== 'resolved' && group !== 'closed' && 
+            ((c as any).isCritical === true || c.priority === 4 || (c as any).priority === 'Critical' || (c as any).priorityCode === 4);
+        } else if (selectedStatGroup === 'Pending') {
+          matchesStatGroup = group === 'new';
+        } else if (selectedStatGroup === 'In Progress') {
+          matchesStatGroup = group !== 'new' && group !== 'resolved' && group !== 'closed';
+        } else if (selectedStatGroup === 'Resolved') {
+          matchesStatGroup = group === 'resolved' || group === 'closed';
+        }
+      }
+
+      return matchesStatus && matchesService && matchesSearch && matchesStatGroup;
     });
   };
 
-  const getDashboardStatusGroup = (status?: string) => {
-    const compact = (status || '').toLowerCase().replace(/[\s_-]/g, '');
+  const getDashboardStatusGroup = (statusLabel?: string) => {
+    const compact = (statusLabel || '').toLowerCase().replace(/[\s_-]/g, '');
     if (compact === 'resolved') return 'resolved';
     if (compact === 'closed') return 'closed';
-    if (compact === 'new') return 'new';
+    if (compact === 'new' || compact === 'pending(unassigned)' || compact === 'pending') return 'new';
     return 'in-progress';
   };
 
@@ -251,131 +277,171 @@ export function DashboardScreen() {
     };
   };
 
+
   const renderHeader = () => {
     const calcStats = getCalculatedStats();
+    
+    // We get today's date for the right side
+    const today = new Date();
+    const dateOpts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+    const dayOpts: Intl.DateTimeFormatOptions = { weekday: 'long' };
+    
     return (
       <View style={styles.header}>
-      {/* Stat Cards Grid */}
-      {stats && (
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          contentContainerStyle={styles.statsGrid}
-        >
-          {/* Critical Card */}
-          <View style={styles.statCardCompact}>
-            <View style={styles.statCardTop}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#fef2f2' }]}>
-                <Text style={{ fontSize: 14 }}>⚠</Text>
-              </View>
-              <View style={[styles.statChip, { backgroundColor: '#fef2f2' }]}>
-                <Text style={[styles.statChipText, { color: '#ef4444' }]}>PRIORITY</Text>
-              </View>
+        {/* Welcome Section */}
+        <View style={styles.welcomeSection}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.welcomeTitle}>Hello, {userEmail.split('@')[0]}!</Text>
+            <Text style={styles.welcomeSubtitle}>🛡️ Department Head</Text>
+          </View>
+          <View style={styles.dateBlock}>
+            <View style={styles.dateIconCircle}>
+              <Text style={{ fontSize: 16 }}>📅</Text>
             </View>
-            <Text style={styles.statValueCompact}>{calcStats.critical}</Text>
-            <Text style={styles.statLabelCompact}>Critical</Text>
-            <View style={styles.statProgressBlockCompact}>
-              <View style={styles.progressBarBgCompact}>
-                <View style={[styles.progressBarFill, { backgroundColor: '#ef4444', width: `${calcStats.total ? (calcStats.critical / calcStats.total) * 100 : 0}%` }]} />
-              </View>
-              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.critical / calcStats.total) * 100) : 0}% of total</Text>
+            <View>
+              <Text style={styles.dayText}>{today.toLocaleDateString('en-US', dayOpts)}</Text>
+              <Text style={styles.dateText}>{today.toLocaleDateString('en-US', dateOpts)}</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.whiteContainer}>
+          {/* Stat Cards Grid */}
+          <View style={styles.overviewHeaderRow}>
+            <Text style={styles.overviewTitle}>Overview</Text>
+            <Text style={styles.overviewSubtitle}>Live Data</Text>
+          </View>
+
+          {stats && (
+            <View style={styles.statsGrid}>
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={() => setSelectedStatGroup(selectedStatGroup === 'Critical' ? null : 'Critical')}
+                style={[
+                  styles.statCardCompact, 
+                  { backgroundColor: '#fef2f2' },
+                  selectedStatGroup && selectedStatGroup !== 'Critical' ? { opacity: 0.4 } : {}
+                ]}
+              >
+                <View style={[styles.statIconCircle, { backgroundColor: '#ef4444' }]}>
+                  <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/ffffff/high-importance.png' }} style={{ width: 14, height: 14 }} />
+                </View>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValueCompact, { color: '#b91c1c' }]}>{calcStats.critical}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statLabelCompact}>Critical</Text>
+                <View style={[styles.statBottomLine, { backgroundColor: '#ef4444' }]} />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={() => setSelectedStatGroup(selectedStatGroup === 'Pending' ? null : 'Pending')}
+                style={[
+                  styles.statCardCompact, 
+                  { backgroundColor: '#fff7ed' },
+                  selectedStatGroup && selectedStatGroup !== 'Pending' ? { opacity: 0.4 } : {}
+                ]}
+              >
+                <View style={[styles.statIconCircle, { backgroundColor: '#f97316' }]}>
+                  <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/ffffff/hourglass.png' }} style={{ width: 14, height: 14 }} />
+                </View>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValueCompact, { color: '#c2410c' }]}>{calcStats.pending}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statLabelCompact}>Pending</Text>
+                <View style={[styles.statBottomLine, { backgroundColor: '#f97316' }]} />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={() => setSelectedStatGroup(selectedStatGroup === 'In Progress' ? null : 'In Progress')}
+                style={[
+                  styles.statCardCompact, 
+                  { backgroundColor: '#faf5ff' },
+                  selectedStatGroup && selectedStatGroup !== 'In Progress' ? { opacity: 0.4 } : {}
+                ]}
+              >
+                <View style={[styles.statIconCircle, { backgroundColor: '#a855f7' }]}>
+                  <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/ffffff/synchronize.png' }} style={{ width: 14, height: 14 }} />
+                </View>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValueCompact, { color: '#7c3aed' }]}>{calcStats.inProgress}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statLabelCompact}>In Progress</Text>
+                <View style={[styles.statBottomLine, { backgroundColor: '#a855f7' }]} />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={() => setSelectedStatGroup(selectedStatGroup === 'Resolved' ? null : 'Resolved')}
+                style={[
+                  styles.statCardCompact, 
+                  { backgroundColor: '#f0fdf4' },
+                  selectedStatGroup && selectedStatGroup !== 'Resolved' ? { opacity: 0.4 } : {}
+                ]}
+              >
+                <View style={[styles.statIconCircle, { backgroundColor: '#22c55e' }]}>
+                  <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/ffffff/checkmark--v1.png' }} style={{ width: 14, height: 14 }} />
+                </View>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValueCompact, { color: '#059669' }]}>{calcStats.resolved}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statLabelCompact}>Resolved</Text>
+                <View style={[styles.statBottomLine, { backgroundColor: '#22c55e' }]} />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Search Bar */}
+          <View style={styles.searchRow}>
+            <View style={styles.searchInputWrapper}>
+              <Text style={styles.searchIcon}>🔍</Text>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search by Ticket Number..."
+                placeholderTextColor="#94a3b8"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Text style={{ fontSize: 16, color: '#94a3b8', paddingRight: 4 }}>✕</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
-          {/* Pending Card */}
-          <View style={styles.statCardCompact}>
-            <View style={styles.statCardTop}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#fff7ed' }]}>
-                <Text style={{ fontSize: 14 }}>⏱</Text>
-              </View>
-              <View style={[styles.statChip, { backgroundColor: '#fff7ed' }]}>
-                <Text style={[styles.statChipText, { color: '#f97316' }]}>OPEN</Text>
-              </View>
-            </View>
-            <Text style={styles.statValueCompact}>{calcStats.pending}</Text>
-            <Text style={styles.statLabelCompact}>Pending</Text>
-            <View style={styles.statProgressBlockCompact}>
-              <View style={styles.progressBarBgCompact}>
-                <View style={[styles.progressBarFill, { backgroundColor: '#f97316', width: `${calcStats.total ? (calcStats.pending / calcStats.total) * 100 : 0}%` }]} />
-              </View>
-              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.pending / calcStats.total) * 100) : 0}% of total</Text>
-            </View>
+          {/* Filter Row */}
+          <View style={styles.filtersRow}>
+            <TouchableOpacity
+              ref={serviceBtnRef}
+              style={styles.filterDropdownBtn}
+              onPress={() => openDropdown('service', serviceBtnRef)}
+            >
+              <Text style={styles.filterDropdownText} numberOfLines={1}>{selectedService} ▾</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              ref={statusBtnRef}
+              style={styles.filterDropdownBtn}
+              onPress={() => openDropdown('status', statusBtnRef)}
+            >
+              <Text style={styles.filterDropdownText} numberOfLines={1}>{selectedStatus} ▾</Text>
+            </TouchableOpacity>
           </View>
-
-          {/* In Progress Card */}
-          <View style={styles.statCardCompact}>
-            <View style={styles.statCardTop}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#eef2ff' }]}>
-                <Text style={{ fontSize: 14 }}>📋</Text>
-              </View>
-              <View style={[styles.statChip, { backgroundColor: '#eef2ff' }]}>
-                <Text style={[styles.statChipText, { color: '#6366f1' }]}>ACTIVE</Text>
-              </View>
-            </View>
-            {/* @ts-ignore - inProgressComplaints might not be typed yet */}
-            <Text style={styles.statValueCompact}>{calcStats.inProgress}</Text>
-            <Text style={styles.statLabelCompact}>In Progress</Text>
-            <View style={styles.statProgressBlockCompact}>
-              <View style={styles.progressBarBgCompact}>
-                {/* @ts-ignore */}
-                <View style={[styles.progressBarFill, { backgroundColor: '#6366f1', width: `${calcStats.total ? (calcStats.inProgress / calcStats.total) * 100 : 0}%` }]} />
-              </View>
-              {/* @ts-ignore */}
-              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.inProgress / calcStats.total) * 100) : 0}% of total</Text>
-            </View>
-          </View>
-
-          {/* Resolved Card */}
-          <View style={styles.statCardCompact}>
-            <View style={styles.statCardTop}>
-              <View style={[styles.statIconCircle, { backgroundColor: '#ecfdf5' }]}>
-                <Text style={{ fontSize: 14 }}>✓</Text>
-              </View>
-              <View style={[styles.statChip, { backgroundColor: '#ecfdf5' }]}>
-                <Text style={[styles.statChipText, { color: '#10b981' }]}>RATE</Text>
-              </View>
-            </View>
-            <Text style={styles.statValueCompact}>{calcStats.resolved}</Text>
-            <Text style={styles.statLabelCompact}>Resolved</Text>
-            <View style={styles.statProgressBlockCompact}>
-              <View style={styles.progressBarBgCompact}>
-                <View style={[styles.progressBarFill, { backgroundColor: '#10b981', width: `${calcStats.total ? (calcStats.resolved / calcStats.total) * 100 : 0}%` }]} />
-              </View>
-              <Text style={styles.statMetaCompact}>{calcStats.total ? Math.round((calcStats.resolved / calcStats.total) * 100) : 0}% res rate</Text>
-            </View>
-          </View>
-        </ScrollView>
-      )}
-
-      <View style={styles.listHeaderRow}>
-        <Text style={styles.listHeaderTitle}>Recent Complaints</Text>
+        </View>
       </View>
-      <View style={styles.filtersRow}>
-        <TouchableOpacity 
-          ref={serviceBtnRef}
-          style={styles.filterDropdownBtn}
-          onPress={() => openDropdown('service', serviceBtnRef)}
-        >
-          <Text style={styles.filterDropdownText} numberOfLines={1}>{selectedService} ▼</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          ref={statusBtnRef}
-          style={styles.filterDropdownBtn}
-          onPress={() => openDropdown('status', statusBtnRef)}
-        >
-          <Text style={styles.filterDropdownText} numberOfLines={1}>{selectedStatus} ▼</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-};
+    );
+  };
 
-const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
+  const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
     const statusInfo = getStatusDisplay(item.status);
+    const ticketNo = item.complaintNumber || (item as any).ticketNo || (item as any).TicketNo;
+    const isCritical = (item as any).isCritical === true || item.priority === 4 || (item as any).priority === 'Critical' || (item as any).priorityCode === 4;
     return (
-      <View style={styles.complaintCard}>
+      <View style={[styles.complaintCard, { borderLeftWidth: 4, borderLeftColor: statusInfo.color }]}>
         <View style={styles.complaintHeader}>
-          <Text style={styles.complaintNumber}>{(item.complaintNumber || (item as any).ticketNo || (item as any).TicketNo)}</Text>
+          <View style={[styles.ticketBadge, { flexDirection: 'row', alignItems: 'center' }]}>
+            <Text style={styles.ticketBadgeText}># {ticketNo}</Text>
+            {isCritical && (
+              <View style={{ marginLeft: 6, backgroundColor: '#fee2e2', borderRadius: 10, width: 16, height: 16, justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: '#ef4444', fontSize: 10, fontWeight: 'bold' }}>!</Text>
+              </View>
+            )}
+          </View>
           <View style={[styles.badge, { backgroundColor: statusInfo.bg }]}>
             <Text style={[styles.badgeText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
           </View>
@@ -383,22 +449,19 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
         <Text style={styles.complaintTitle} numberOfLines={2}>
           {item.title}
         </Text>
-        <View style={styles.complaintFooter}>
-          <Text style={styles.complaintCategory} numberOfLines={1}>{item.category}</Text>
-          <Text style={styles.complaintDate}>{formatDate(item.createdAt)}</Text>
+        <View style={styles.complaintMeta}>
+          <Text style={styles.complaintCategory} numberOfLines={1}>📁 {item.category}</Text>
+          <Text style={styles.complaintDate}>📅 {formatDate(item.createdAt)}</Text>
         </View>
-        <View style={styles.complaintActionRow}>
-          <TouchableOpacity 
-            style={styles.viewButton} 
-            activeOpacity={0.7}
-            onPress={() => {
-              const ticketNo = item.complaintNumber || (item as any).ticketNo || (item as any).TicketNo;
-              navigation.navigate('ComplaintDetail', { complaintNumber: ticketNo });
-            }}
-          >
-            <Text style={styles.viewButtonText}>View Details</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={styles.viewButton}
+          activeOpacity={0.8}
+          onPress={() => {
+            navigation.navigate('ComplaintDetail', { complaintNumber: ticketNo });
+          }}
+        >
+          <Text style={styles.viewButtonText}>View Details  →</Text>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -414,16 +477,19 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f9fafb" />
-      
+      <StatusBar barStyle="light-content" backgroundColor="#0B2046" />
+
+      {/* Deep Blue Header Background */}
+      <View style={styles.blueHeaderBg} />
+
       {/* Dropdown Modal */}
       <Modal visible={activeDropdown !== null} transparent animationType="fade">
         <TouchableWithoutFeedback onPress={() => setActiveDropdown(null)}>
           <View style={styles.dropdownOverlayAbsolute}>
             <View style={[
-              styles.dropdownMenuAbsolute, 
-              { 
-                top: dropdownPos.top, 
+              styles.dropdownMenuAbsolute,
+              {
+                top: dropdownPos.top,
                 width: dropdownPos.width,
                 ...(dropdownPos.left !== undefined ? { left: dropdownPos.left } : {}),
                 ...(dropdownPos.right !== undefined ? { right: dropdownPos.right } : {})
@@ -433,8 +499,8 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
                 {(activeDropdown === 'status' ? statusOptions : serviceOptions).map(option => {
                   const isActive = (activeDropdown === 'status' ? selectedStatus : selectedService) === option;
                   return (
-                    <TouchableOpacity 
-                      key={option} 
+                    <TouchableOpacity
+                      key={option}
                       style={styles.dropdownItemCentered}
                       onPress={() => {
                         if (activeDropdown === 'status') setSelectedStatus(option);
@@ -443,7 +509,7 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
                       }}
                     >
                       <Text style={[
-                        styles.dropdownItemTextCentered, 
+                        styles.dropdownItemTextCentered,
                         isActive && styles.dropdownItemTextActive
                       ]}>
                         {option}
@@ -462,10 +528,13 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
           <TouchableOpacity style={styles.menuButton} onPress={toggleDrawer}>
             <Text style={styles.menuIcon}>☰</Text>
           </TouchableOpacity>
-          <Image source={require('../../assets/logos/cat20.png')} style={styles.headerLogo} resizeMode="contain" />
-        </View>
-        <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.headerSubtitle}>{userEmail}</Text>
+          <View style={styles.brandContainer}>
+            <Image source={require('../../assets/logos/cat20.png')} style={styles.headerLogoSmall} resizeMode="contain" />
+            <View>
+              <Text style={styles.brandTitle}>CAT2020 CMS</Text>
+              <Text style={styles.brandSubtitle}>Complaint Management System</Text>
+            </View>
+          </View>
         </View>
       </View>
 
@@ -493,9 +562,7 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
 
       {/* ─── Custom Drawer Overlay ─── */}
       {isDrawerOpen && (
-        <Animated.View 
-          style={[styles.overlay, { opacity: overlayAnim }]}
-        >
+        <Animated.View style={[styles.overlay, { opacity: overlayAnim }]}>
           <TouchableWithoutFeedback onPress={toggleDrawer}>
             <View style={styles.overlayBackground} />
           </TouchableWithoutFeedback>
@@ -504,30 +571,46 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
 
       <Animated.View style={[styles.drawerContainer, { transform: [{ translateX: slideAnim }] }]}>
         <SafeAreaView style={styles.drawerSafeArea} edges={['top', 'bottom']}>
-          {/* Drawer Header */}
-          <View style={styles.drawerHeader}>
-            <Image 
-              source={require('../../assets/logos/cat20.png')} 
-              style={styles.drawerLogo} 
-              resizeMode="contain" 
-            />
-            <Text style={styles.drawerTitle}>CAT2020 CMS</Text>
-          </View>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+            {/* Drawer Header (Deep Blue) */}
+            <View style={styles.drawerHeaderBlue}>
+              <View style={styles.drawerBrandRow}>
+                <Image source={require('../../assets/logos/cat20.png')} style={styles.drawerLogoSmall} resizeMode="contain" />
+                <View>
+                  <Text style={styles.drawerBrandTitle}>CAT2020 CMS</Text>
+                  <Text style={styles.drawerBrandSub}>Complaint Management System</Text>
+                </View>
+              </View>
 
-          {/* Drawer Links */}
-          <View style={styles.drawerLinksContainer}>
-            <TouchableOpacity style={styles.drawerLinkActive} onPress={toggleDrawer}>
-              <Text style={styles.drawerLinkIcon}>📊</Text>
-              <Text style={styles.drawerLinkTextActive}>Dashboard</Text>
-            </TouchableOpacity>
-          </View>
+              <View style={styles.drawerProfileRow}>
+                <View style={styles.drawerProfileTextWrap}>
+                  <Text style={styles.drawerProfileName}>{userEmail.split('@')[0] || 'Juan Dela Cruz'}</Text>
+                  <Text style={styles.drawerProfileRole}>Department Head</Text>
+                  <Text style={styles.drawerProfileOnline}>🟢 Online</Text>
+                </View>
+              </View>
+            </View>
 
-          {/* Drawer Footer */}
-          <View style={styles.drawerFooter}>
-            <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-              <Text style={styles.logoutBtnText}>🚪 Sign Out</Text>
-            </TouchableOpacity>
-          </View>
+            {/* Drawer Links */}
+            <View style={styles.drawerLinksContainer}>
+              <TouchableOpacity style={styles.drawerLinkActive} onPress={toggleDrawer}>
+                <Text style={styles.drawerLinkIconActive}>🏠</Text>
+                <Text style={styles.drawerLinkTextActive}>Dashboard</Text>
+              </TouchableOpacity>
+
+
+              <View style={{ marginTop: 'auto' }}>
+                <View style={styles.drawerDivider} />
+
+                <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+                  <Text style={styles.logoutIcon}>🚪</Text>
+                  <Text style={styles.logoutBtnText}>Logout</Text>
+                </TouchableOpacity>
+                
+                <View style={{height: 40}} />
+              </View>
+            </View>
+          </ScrollView>
         </SafeAreaView>
       </Animated.View>
     </SafeAreaView>
@@ -536,14 +619,16 @@ const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
+const PRIMARY_BLUE = '#0B2046';
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#ffffff',
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#ffffff',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -553,153 +638,291 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
-  listContent: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  header: {
-    marginBottom: 16,
+  
+  // Header Adjustments
+  blueHeaderBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 250,
+    backgroundColor: PRIMARY_BLUE,
   },
   headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#0F4C81',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a24',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
-  headerLogo: {
-    width: 160,
-    height: 48,
-    marginLeft: 0,
+    paddingTop: 16,
+    paddingBottom: 24,
   },
   menuButton: {
-    marginRight: 12,
-    padding: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 8,
+    marginRight: 16,
   },
   menuIcon: {
-    fontSize: 20,
+    fontSize: 24,
     color: '#ffffff',
   },
-  headerTitle: {
-    fontSize: 24,
+  brandContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerLogoSmall: {
+    width: 40,
+    height: 40,
+    marginRight: 10,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+  },
+  brandTitle: {
+    fontSize: 16,
     fontWeight: '800',
     color: '#ffffff',
   },
-  headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginTop: 4,
+  brandSubtitle: {
+    fontSize: 10,
+    color: '#93c5fd',
   },
-  statsGrid: {
+  headerRightActions: {
     flexDirection: 'row',
-    paddingBottom: 24,
-    gap: 12,
-    paddingRight: 16, // So the last card doesn't stick to the edge
+    alignItems: 'center',
   },
-  statCardCompact: {
-    width: 150, // Fixed width for horizontal scrolling
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+  notificationBell: {
+    position: 'relative',
+    marginRight: 16,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#ef4444',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: PRIMARY_BLUE,
   },
-  statCardTop: {
+  notificationBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: 'bold',
+  },
+  avatarContainer: {
+    position: 'relative',
+  },
+  onlineDotMain: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 10,
+    height: 10,
+    backgroundColor: '#10b981',
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: PRIMARY_BLUE,
+  },
+  
+  // List Header Section
+  listContent: {
+    paddingBottom: 40,
+  },
+  header: {
+    marginBottom: 0,
+  },
+  whiteContainer: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 24,
+  },
+  welcomeSection: {
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  welcomeTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  welcomeSubtitle: {
+    fontSize: 12,
+    color: '#cbd5e1',
+  },
+  dateBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginLeft: 10,
+  },
+  dateIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  dateText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dayText: {
+    color: '#93c5fd',
+    fontSize: 11,
+  },
+
+  overviewHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    paddingHorizontal: 20,
+    marginBottom: 10,
+  },
+  overviewTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+    letterSpacing: 0.5,
+  },
+  overviewSubtitle: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.5)',
+  },
+
+  statsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+  },
+  statCardCompact: {
+    flex: 1,
+    borderRadius: 16,
+    paddingTop: 12,
+    paddingHorizontal: 8,
+    paddingBottom: 16,
+    marginHorizontal: 4,
+    alignItems: 'flex-start',
   },
   statIconCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 8,
+  },
+  statValueCompact: {
+    fontSize: 24,
+    fontWeight: '800',
+    marginBottom: 2,
+    marginLeft: 2,
   },
   statLabelCompact: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: 8,
+    color: '#475569',
+    marginLeft: 2,
   },
-  statChip: {
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 12,
-  },
-  statChipText: {
-    fontSize: 8,
-    fontWeight: '800',
-  },
-  statValueCompact: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  statProgressBlockCompact: {
-    marginTop: 'auto',
-  },
-  progressBarBgCompact: {
+  statBottomLine: {
     height: 3,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 1.5,
-    marginBottom: 4,
+    width: 24,
+    borderRadius: 2,
+    marginTop: 8,
+    marginLeft: 2,
   },
-  progressBarFill: {
-    height: 3,
-    borderRadius: 1.5,
-  },
-  statMetaCompact: {
+  statTrendText: {
     fontSize: 10,
-    color: '#9ca3af',
+    color: '#94a3b8',
     fontWeight: '500',
+  },
+
+  listHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 16,
   },
   listHeaderTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     color: '#111827',
   },
+  viewAllText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#93c5fd',
+  },
+  
+  searchRow: {
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  searchInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  searchIcon: {
+    fontSize: 16,
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1e293b',
+  },
+
   filtersRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 0,
-    marginBottom: 12,
-    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    gap: 10,
   },
   filterDropdownBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eff6ff',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   filterDropdownText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#2563eb',
+    color: '#334155',
   },
+  
+  // Dropdowns
   dropdownOverlayAbsolute: {
     flex: 1,
   },
@@ -721,7 +944,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f3f4f6',
   },
   dropdownItemTextCentered: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
     color: '#4b5563',
     textAlign: 'center',
@@ -730,88 +953,101 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontWeight: '700',
   },
-  viewAllText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#2563eb',
-  },
+
+  // Complaint Card
   complaintCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+    marginHorizontal: 16,
+    marginBottom: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.02,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   complaintHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
+  },
+  ticketBadge: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  ticketBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1d4ed8',
   },
   complaintNumber: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#4b5563',
+    color: '#64748b',
   },
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 8,
   },
   badgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
   complaintTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 10,
+    lineHeight: 20,
+  },
+  complaintMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 12,
-    lineHeight: 22,
   },
   complaintFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+    borderTopColor: '#f1f5f9',
     paddingTop: 12,
   },
   complaintCategory: {
-    fontSize: 13,
-    color: '#6b7280',
+    fontSize: 11,
+    color: '#64748b',
     flex: 1,
     marginRight: 8,
   },
   complaintDate: {
-    fontSize: 12,
-    color: '#9ca3af',
+    fontSize: 10,
+    color: '#94a3b8',
     fontWeight: '500',
   },
   complaintActionRow: {
     marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    paddingTop: 12,
-    alignItems: 'flex-end',
   },
   viewButton: {
-    backgroundColor: '#eff6ff',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
+    backgroundColor: '#0B2046',
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
   },
   viewButtonText: {
-    color: '#2563eb',
+    color: '#ffffff',
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
+
   emptyState: {
     padding: 40,
     alignItems: 'center',
@@ -826,18 +1062,13 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   footerContainer: {
-    backgroundColor: '#ffffff',
-    paddingVertical: 16,
+    paddingVertical: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    marginTop: 20,
-    borderRadius: 12,
   },
   footerText: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: '#94a3b8',
     fontWeight: '500',
   },
 
@@ -845,7 +1076,7 @@ const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     zIndex: 10,
   },
   overlayBackground: {
@@ -855,70 +1086,156 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0, left: 0, bottom: 0,
     width: DRAWER_WIDTH,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#f8fafc',
     zIndex: 20,
     shadowColor: '#000',
     shadowOffset: { width: 5, height: 0 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
     elevation: 20,
   },
   drawerSafeArea: {
     flex: 1,
   },
-  drawerHeader: {
+  drawerHeaderBlue: {
+    backgroundColor: PRIMARY_BLUE,
+    paddingTop: 20,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  drawerBrandRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 30,
-    backgroundColor: '#0F4C81',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-    marginBottom: 10,
+    marginBottom: 24,
   },
-  drawerLogo: {
-    width: 70,
-    height: 70,
-    marginBottom: 10,
+  drawerLogoSmall: {
+    width: 48,
+    height: 48,
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    marginRight: 12,
   },
-  drawerTitle: {
+  drawerBrandTitle: {
     fontSize: 18,
     fontWeight: '800',
     color: '#ffffff',
   },
+  drawerBrandSub: {
+    fontSize: 10,
+    color: '#93c5fd',
+  },
+  drawerProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  drawerAvatarWrap: {
+    position: 'relative',
+    marginRight: 16,
+  },
+  onlineDotDrawer: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 12,
+    height: 12,
+    backgroundColor: '#10b981',
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: PRIMARY_BLUE,
+  },
+  drawerProfileTextWrap: {
+    flex: 1,
+  },
+  drawerProfileName: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  drawerProfileRole: {
+    fontSize: 12,
+    color: '#e2e8f0',
+    marginBottom: 2,
+  },
+  drawerProfileOnline: {
+    fontSize: 11,
+    color: '#10b981',
+    marginTop: 4,
+    fontWeight: '600',
+  },
   drawerLinksContainer: {
     flex: 1,
     paddingHorizontal: 16,
-    paddingTop: 16,
+    paddingTop: 24,
   },
   drawerLinkActive: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#eff6ff',
-    paddingVertical: 12,
+    backgroundColor: '#e0e7ff',
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  drawerLinkInactive: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  drawerLinkIconActive: {
+    fontSize: 20,
+    marginRight: 16,
   },
   drawerLinkIcon: {
-    fontSize: 18,
-    marginRight: 12,
+    fontSize: 20,
+    marginRight: 16,
+    opacity: 0.8,
   },
   drawerLinkTextActive: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#2563EB',
+    color: '#4338ca',
   },
-  drawerFooter: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
+  drawerLinkTextInactive: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#334155',
+  },
+  drawerBadge: {
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 'auto',
+  },
+  drawerBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  drawerDivider: {
+    height: 1,
+    backgroundColor: '#e2e8f0',
+    marginVertical: 12,
+    marginHorizontal: 8,
   },
   logoutBtn: {
-    paddingVertical: 14,
-    backgroundColor: '#fef2f2',
-    borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  logoutIcon: {
+    fontSize: 20,
+    marginRight: 16,
   },
   logoutBtnText: {
-    color: '#dc2626',
+    color: '#ef4444',
     fontSize: 15,
     fontWeight: '700',
   },

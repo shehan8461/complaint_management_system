@@ -11,9 +11,13 @@ import {
   Linking,
   Image,
   Modal,
+  TextInput,
+  Alert,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { DashboardService, CMSComplaintDetail } from '../../services/DashboardService';
+import { DashboardService, CMSComplaintDetail, CMSUser, CMSDepartment } from '../../services/DashboardService';
+import { AuthService } from '../../services/AuthService';
 
 // Helpers
 function getStatusDisplay(status: number): { label: string; color: string; bg: string } {
@@ -58,13 +62,187 @@ export function ComplaintDetailScreen() {
   const [activeTab, setActiveTab] = useState('overview');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
+  // Assignment Feature State
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [departments, setDepartments] = useState<CMSDepartment[]>([]);
+  const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
+  const [allDepartmentHeads, setAllDepartmentHeads] = useState<CMSUser[]>([]);
+  const [selectedDeptHead, setSelectedDeptHead] = useState<CMSUser | null>(null);
+  
+  const [resolutionDate, setResolutionDate] = useState<string>('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [assignRemarks, setAssignRemarks] = useState<string>('');
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [isReassignment, setIsReassignment] = useState(false);
+
+  // Review & Resolve State
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [activeReviewTab, setActiveReviewTab] = useState<'approve'|'disapprove'>('approve');
+  const [reviewRemarks, setReviewRemarks] = useState<string>('');
+  const [isReviewing, setIsReviewing] = useState(false);
+
+  const minuteSuggestions = [
+    'Kindly attend to this urgently.',
+    'Immediate attention is required.',
+    'Please take the required actions.',
+    'Please review and proceed accordingly.',
+    'Necessary action to be taken promptly.',
+  ];
+
   useEffect(() => {
+    checkAdminStatus();
     if (complaintNumber) {
       fetchDetails(complaintNumber);
     } else {
       setIsLoading(false);
     }
   }, [complaintNumber]);
+
+  const checkAdminStatus = async () => {
+    const user = await AuthService.getMe();
+    if (user) {
+      setIsAdmin(!!(user.roles?.includes('9') || user.roles?.includes(9)));
+    }
+  };
+
+  const fetchAssignmentData = async () => {
+    try {
+      const [users, depts] = await Promise.all([
+        DashboardService.getCmsUsers(),
+        DashboardService.getDepartments()
+      ]);
+      
+      setDepartments(depts);
+      // Filter for Department Head (roleId = 10)
+      const heads = users.filter(u => Number(u.roleId) === 10);
+      setAllDepartmentHeads(heads);
+      
+      // Default resolution date to tomorrow
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setResolutionDate(tomorrow.toISOString().slice(0, 10));
+      
+    } catch (error) {
+      console.error('Failed to load assignment data', error);
+      Alert.alert('Error', 'Could not load assignment data');
+    }
+  };
+
+  const handleOpenAssign = () => {
+    setShowAssignModal(true);
+    setSelectedDeptId(null);
+    setSelectedDeptHead(null);
+    setAssignRemarks('');
+    fetchAssignmentData();
+  };
+
+  const handleOpenReassign = () => {
+    setIsReassignment(true);
+    setShowAssignModal(true);
+    setAssignRemarks('');
+    fetchAssignmentData();
+  };
+
+  const handleAssignSubmit = async () => {
+    if (!selectedDeptId) {
+      Alert.alert('Validation', 'Please select a Department.');
+      return;
+    }
+    if (!selectedDeptHead) {
+      Alert.alert('Validation', 'Please select a Department Head.');
+      return;
+    }
+    if (!resolutionDate) {
+      Alert.alert('Validation', 'Completion Due Date is required.');
+      return;
+    }
+    if (!assignRemarks || assignRemarks.trim().length < 10) {
+      Alert.alert('Validation', 'Minute is required and must be at least 10 characters.');
+      return;
+    }
+
+    // Basic date validation
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(resolutionDate)) {
+      Alert.alert('Validation', 'Please enter a valid date in YYYY-MM-DD format.');
+      return;
+    }
+
+    try {
+      setIsAssigning(true);
+      await DashboardService.assignComplaint(complaint!.id, {
+        toUserId: selectedDeptHead.id,
+        toUserName: selectedDeptHead.nameWithInitials || selectedDeptHead.username,
+        toRole: 5, // Department Head Assignment Role
+        toOrgUnitId: selectedDeptId,
+        remarks: assignRemarks,
+        isReassignment: isReassignment,
+        resolutionDueAt: resolutionDate + 'T23:59:59',
+      });
+      
+      Alert.alert('Success', `Complaint successfully ${isReassignment ? 'reassigned' : 'assigned'} to Department Head.`);
+      setShowAssignModal(false);
+      
+      // Refresh complaint details
+      fetchDetails(complaintNumber);
+    } catch (error: any) {
+      console.error('Assign error:', error);
+      Alert.alert('Assignment Failed', error?.message || 'Could not assign complaint.');
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  const handleReviewSubmit = async () => {
+    if (!reviewRemarks || reviewRemarks.trim().length < 5) {
+      Alert.alert('Validation', 'Remarks are required (min 5 characters).');
+      return;
+    }
+
+    try {
+      setIsReviewing(true);
+      
+      if (activeReviewTab === 'approve') {
+        await DashboardService.updateComplaintStatus(complaint!.id, {
+          status: 6, // Resolved
+          remarks: reviewRemarks,
+          resolutionSummary: reviewRemarks
+        });
+        Alert.alert('Success', 'Complaint successfully reviewed and resolved.');
+      } else {
+        // Disapprove Logic
+        const assignments = complaint?.assignments || [];
+        const latestDeptHeadAssignment = [...assignments]
+          .reverse()
+          .find((item: any) => [5, 10].includes(Number(item.toRole || item.ToRole)) && Number(item.toUserId || item.ToUserId) > 0);
+          
+        if (!latestDeptHeadAssignment) {
+           Alert.alert('Error', 'Failed to disapprove: no department head assignment found to route back to.');
+           setIsReviewing(false);
+           return;
+        }
+        
+        await DashboardService.assignComplaint(complaint!.id, {
+          toUserId: Number(latestDeptHeadAssignment.toUserId || latestDeptHeadAssignment.ToUserId),
+          toUserName: latestDeptHeadAssignment.toUserName || latestDeptHeadAssignment.ToUserName || `Department Head`,
+          toRole: 5,
+          remarks: `Admin disapproved: ${reviewRemarks}`,
+          isReassignment: true,
+        });
+        Alert.alert('Success', 'Complaint disapproved and returned to Department Head.');
+      }
+      
+      setShowReviewModal(false);
+      
+      // Refresh complaint details
+      fetchDetails(complaintNumber);
+    } catch (error: any) {
+      console.error('Review error:', error);
+      Alert.alert('Review Failed', error?.message || 'Could not resolve complaint.');
+    } finally {
+      setIsReviewing(false);
+    }
+  };
 
   const fetchDetails = async (ticketNo: string) => {
     try {
@@ -81,7 +259,7 @@ export function ComplaintDetailScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#2563eb" />
+        <ActivityIndicator size="large" color="#0B2046" />
         <Text style={styles.loadingText}>Loading details...</Text>
       </SafeAreaView>
     );
@@ -130,7 +308,7 @@ export function ComplaintDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B2046" />
       
       {/* Header */}
       <View style={styles.header}>
@@ -142,7 +320,8 @@ export function ComplaintDetailScreen() {
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.mainContent}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
         {/* Title Area */}
         <View style={styles.titleSection}>
@@ -161,41 +340,8 @@ export function ComplaintDetailScreen() {
             <View style={styles.statItem}>
               <Text style={styles.statLabel}>CURRENTLY</Text>
               <View style={styles.statValueRow}>
-                <Text style={styles.statIcon}>👤</Text>
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/user.png' }} style={{ width: 16, height: 16, marginRight: 6 }} />
                 <Text style={[styles.statValue, { color: statusInfo.color }]}>{complaint.assignedTo || statusInfo.label}</Text>
-              </View>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>CATEGORY</Text>
-              <View style={styles.statValueRow}>
-                <Text style={styles.statIcon}>📁</Text>
-                <Text style={styles.statValue} numberOfLines={1}>{complaint.category}</Text>
-              </View>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>PRIORITY</Text>
-              <View style={styles.statValueRow}>
-                <Text style={styles.statIcon}>🚩</Text>
-                <View style={styles.priorityBadge}>
-                  <Text style={styles.priorityText}>{getPriorityLabel(complaint.priority)}</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-          <View style={styles.statsDivider} />
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>DUE DATE</Text>
-              <View style={styles.statValueRow}>
-                <Text style={styles.statIcon}>📅</Text>
-                <Text style={styles.statValue}>{formatDate(complaint.resolutionDueAt)}</Text>
-              </View>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>TIME ELAPSED</Text>
-              <View style={styles.statValueRow}>
-                <Text style={styles.statIcon}>⏳</Text>
-                <Text style={styles.statValue}>-</Text>
               </View>
             </View>
           </View>
@@ -203,19 +349,18 @@ export function ComplaintDetailScreen() {
 
         {/* Tabs */}
         <View style={styles.tabsContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabsScroll}>
-            {tabs.map(tab => (
-              <TouchableOpacity
-                key={tab.id}
-                style={[styles.tabButton, activeTab === tab.id && styles.tabButtonActive]}
-                onPress={() => setActiveTab(tab.id)}
-              >
-                <Text style={[styles.tabText, activeTab === tab.id && styles.tabTextActive]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          {tabs.map(tab => (
+            <TouchableOpacity
+              key={tab.id}
+              style={[styles.tabButton, activeTab === tab.id && styles.tabButtonActive]}
+              onPress={() => setActiveTab(tab.id)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.tabText, activeTab === tab.id && styles.tabTextActive]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Tab Content - Overview */}
@@ -224,8 +369,9 @@ export function ComplaintDetailScreen() {
             
             {/* Description Card */}
             <View style={styles.card}>
-              <View style={[styles.cardHeader, { backgroundColor: '#f0fdf4' }]}>
-                <Text style={[styles.cardHeaderTitle, { color: '#166534' }]}>Complaint Description</Text>
+              <View style={[styles.cardHeader, { flexDirection: 'row', alignItems: 'center' }]}>
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/document.png' }} style={{ width: 18, height: 18, marginRight: 8 }} />
+                <Text style={styles.cardHeaderTitle}>Description</Text>
               </View>
               <View style={styles.cardBody}>
                 <Text style={styles.descriptionText}>{complaint.description || 'No description provided.'}</Text>
@@ -234,8 +380,9 @@ export function ComplaintDetailScreen() {
 
             {/* Reporter Info Card */}
             <View style={styles.card}>
-              <View style={[styles.cardHeader, { backgroundColor: '#eff6ff' }]}>
-                <Text style={[styles.cardHeaderTitle, { color: '#1e40af' }]}>Reporter Information</Text>
+              <View style={[styles.cardHeader, { flexDirection: 'row', alignItems: 'center' }]}>
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/user.png' }} style={{ width: 18, height: 18, marginRight: 8 }} />
+                <Text style={styles.cardHeaderTitle}>Reporter Information</Text>
               </View>
               <View style={styles.cardBody}>
                 <Text style={styles.sectionSubtitle}>IDENTITY</Text>
@@ -272,11 +419,39 @@ export function ComplaintDetailScreen() {
               </View>
             </View>
 
+            {/* Comments Card */}
+            <View style={styles.card}>
+              <View style={[styles.cardHeader, { flexDirection: 'row', alignItems: 'center' }]}>
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/speech-bubble-with-dots.png' }} style={{ width: 18, height: 18, marginRight: 8 }} />
+                <Text style={styles.cardHeaderTitle}>Comments ({complaint.comments?.length || 0})</Text>
+              </View>
+              <View style={[styles.cardBody, { backgroundColor: '#f9fafb' }]}>
+                {complaint.comments && complaint.comments.length > 0 ? (
+                  complaint.comments.map((comment: any, idx: number) => (
+                    <View key={idx} style={[styles.commentCard, { marginBottom: idx === complaint.comments.length - 1 ? 0 : 12 }]}>
+                      <View style={styles.commentHeader}>
+                        <View style={styles.commentAvatar}>
+                          <Text style={styles.commentAvatarText}>{comment.author ? comment.author.charAt(0).toUpperCase() : 'U'}</Text>
+                        </View>
+                        <View style={styles.commentAuthorInfo}>
+                          <Text style={styles.commentAuthor}>{comment.author}</Text>
+                          <Text style={styles.commentDate}>{formatDate(comment.date)}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.commentText}>{comment.text}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.emptyText}>No comments available.</Text>
+                )}
+              </View>
+            </View>
+
             {/* Attachments Card */}
             <View style={styles.card}>
-              <View style={[styles.cardHeader, { backgroundColor: '#f3f4f6' }]}>
-                <Text style={[styles.cardHeaderTitle, { color: '#374151' }]}>
-                  Complaint Attachments ({complaint.attachments?.length || 0})
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardHeaderTitle}>
+                  📎 Attachments ({complaint.attachments?.length || 0})
                 </Text>
               </View>
               <View style={styles.cardBody}>
@@ -316,6 +491,46 @@ export function ComplaintDetailScreen() {
                 )}
               </View>
             </View>
+
+            {/* Action Row for Assignments */}
+            {(isAdmin && (complaint.status === 1 || complaint.status === 5)) && (
+              <View style={styles.actionRow}>
+                {complaint.status === 1 && (
+                  <TouchableOpacity 
+                    style={styles.assignButtonPrimary} 
+                    onPress={() => {
+                      setIsReassignment(false);
+                      handleOpenAssign();
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.assignButtonText}>Assign to Dept Head →</Text>
+                  </TouchableOpacity>
+                )}
+                {complaint.status === 5 && (
+                  <>
+                    <TouchableOpacity 
+                      style={[styles.assignButtonPrimary, { backgroundColor: '#f59e0b' }]} 
+                      onPress={handleOpenReassign}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.assignButtonText}>Reassign to Dept Head ↺</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={[styles.assignButtonPrimary, { backgroundColor: '#10b981', marginTop: 12 }]} 
+                      onPress={() => {
+                        setReviewRemarks('');
+                        setActiveReviewTab('approve');
+                        setShowReviewModal(true);
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.assignButtonText}>Review & Resolve ✓</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            )}
 
           </View>
         )}
@@ -411,6 +626,13 @@ export function ComplaintDetailScreen() {
           </View>
         )}
 
+        {/* Tab Content - Placeholder for others */}
+        {activeTab !== 'overview' && activeTab !== 'timeline' && activeTab !== 'comments' && (
+          <View style={styles.emptyStateContainer}>
+            <Text style={styles.emptyText}>This section is under development.</Text>
+          </View>
+        )}
+
         {/* Tab Content - Comments */}
         {activeTab === 'comments' && (
           <View style={styles.tabContent}>
@@ -437,14 +659,8 @@ export function ComplaintDetailScreen() {
           </View>
         )}
 
-        {/* Tab Content - Placeholder for others */}
-        {activeTab !== 'overview' && activeTab !== 'timeline' && activeTab !== 'comments' && (
-          <View style={styles.emptyStateContainer}>
-            <Text style={styles.emptyText}>This section is under development.</Text>
-          </View>
-        )}
-
       </ScrollView>
+      </View>
 
       {/* Image Preview Modal */}
       <Modal visible={!!selectedImage} transparent={true} animationType="fade" onRequestClose={() => setSelectedImage(null)}>
@@ -455,6 +671,243 @@ export function ComplaintDetailScreen() {
           <Image source={{ uri: selectedImage || undefined }} style={styles.imageModalImage} resizeMode="contain" />
         </View>
       </Modal>
+
+      {/* Assign Modal */}
+      <Modal visible={showAssignModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.assignModalContainer}>
+            <View style={styles.assignModalHeader}>
+              <Text style={styles.assignModalTitle}>{isReassignment ? 'Reassign' : 'Assign'} to Department Head</Text>
+              <TouchableOpacity onPress={() => setShowAssignModal(false)}>
+                <Text style={styles.closeIcon}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.assignModalBody} showsVerticalScrollIndicator={false}>
+              
+              {/* Department Selection */}
+              <Text style={styles.inputLabel}>Select Department <Text style={{color: '#ef4444'}}>*</Text></Text>
+              <View style={styles.headListContainer}>
+                {departments.length === 0 ? (
+                  <ActivityIndicator size="small" color="#0B2046" style={{ padding: 10 }} />
+                ) : (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{flexDirection: 'row', paddingBottom: 10}}>
+                    {departments.map(dept => (
+                      <TouchableOpacity 
+                        key={dept.id} 
+                        style={[
+                          styles.headItemButton,
+                          { marginRight: 8, marginBottom: 0, alignSelf: 'flex-start' },
+                          selectedDeptId === dept.id && styles.headItemButtonActive
+                        ]}
+                        onPress={() => {
+                          setSelectedDeptId(dept.id);
+                          setSelectedDeptHead(null); // Reset head selection
+                        }}
+                      >
+                        <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                          <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/building.png' }} style={{ width: 16, height: 16, marginRight: 6 }} />
+                          <Text style={[
+                            styles.headItemText,
+                            selectedDeptId === dept.id && styles.headItemTextActive
+                          ]}>
+                            {dept.department}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+
+              {/* Department Head Selection */}
+              {selectedDeptId && (
+                <>
+                  <Text style={styles.inputLabel}>Select Department Head <Text style={{color: '#ef4444'}}>*</Text></Text>
+                  <View style={styles.headListContainer}>
+                    {allDepartmentHeads.filter(h => h.departmentId === selectedDeptId).length === 0 ? (
+                      <Text style={styles.emptyText}>No department heads found for this department.</Text>
+                    ) : (
+                      allDepartmentHeads
+                        .filter(h => h.departmentId === selectedDeptId)
+                        .map(head => (
+                        <TouchableOpacity 
+                          key={head.id} 
+                          style={[
+                            styles.headItemButton,
+                            selectedDeptHead?.id === head.id && styles.headItemButtonActive
+                          ]}
+                          onPress={() => setSelectedDeptHead(head)}
+                        >
+                          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                            <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/user.png' }} style={{ width: 16, height: 16, marginRight: 6 }} />
+                            <Text style={[
+                              styles.headItemText,
+                              selectedDeptHead?.id === head.id && styles.headItemTextActive
+                            ]}>
+                              {head.nameWithInitials} ({head.username})
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))
+                    )}
+                  </View>
+                </>
+              )}
+
+              {/* Resolution Date */}
+              <Text style={styles.inputLabel}>Completion Due Date <Text style={{color: '#ef4444'}}>*</Text></Text>
+              <TouchableOpacity 
+                style={[styles.textInput, { justifyContent: 'center' }]}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Text style={{color: resolutionDate ? '#111827' : '#9ca3af', fontSize: 15}}>
+                  {resolutionDate || 'YYYY-MM-DD'}
+                </Text>
+              </TouchableOpacity>
+
+              {showDatePicker && (
+                <DateTimePicker
+                  value={resolutionDate ? new Date(resolutionDate) : new Date(new Date().setDate(new Date().getDate() + 1))}
+                  mode="date"
+                  display="default"
+                  minimumDate={new Date()}
+                  onChange={(event, selectedDate) => {
+                    setShowDatePicker(false);
+                    if (event.type === 'set' && selectedDate) {
+                      setResolutionDate(selectedDate.toISOString().slice(0, 10));
+                    }
+                  }}
+                />
+              )}
+
+              {/* Minute (Remarks) */}
+              <Text style={styles.inputLabel}>Minute <Text style={{color: '#ef4444'}}>*</Text></Text>
+              <View style={styles.suggestionsContainer}>
+                <Text style={styles.suggestionsLabel}>Quick fill:</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {minuteSuggestions.map((suggestion, idx) => (
+                    <TouchableOpacity 
+                      key={idx} 
+                      style={styles.suggestionChip}
+                      onPress={() => setAssignRemarks(suggestion)}
+                    >
+                      <Text style={styles.suggestionChipText}>{suggestion}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+              
+              <TextInput
+                style={[styles.textInput, styles.textArea]}
+                placeholder="Enter minute details or choose a suggestion above..."
+                placeholderTextColor="#9ca3af"
+                value={assignRemarks}
+                onChangeText={setAssignRemarks}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+              <Text style={styles.charCountText}>
+                {assignRemarks.length}/500 {assignRemarks.length < 10 ? '(min 10 chars)' : ''}
+              </Text>
+
+              <TouchableOpacity 
+                style={[styles.submitAssignBtn, isAssigning && styles.submitAssignBtnDisabled]} 
+                onPress={handleAssignSubmit}
+                disabled={isAssigning}
+              >
+                {isAssigning ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.submitAssignBtnText}>Confirm Assignment</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Review & Resolve Modal */}
+      <Modal visible={showReviewModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.assignModalContainer}>
+            <View style={styles.assignModalHeader}>
+              <Text style={styles.assignModalTitle}>Review & Resolve</Text>
+              <TouchableOpacity onPress={() => setShowReviewModal(false)}>
+                <Text style={styles.closeIcon}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Review Tabs */}
+            <View style={[styles.tabsContainer, { marginHorizontal: 20, marginTop: 10 }]}>
+              <TouchableOpacity
+                style={[styles.tabButton, activeReviewTab === 'approve' && styles.tabButtonActive]}
+                onPress={() => setActiveReviewTab('approve')}
+              >
+                <Text style={[styles.tabText, activeReviewTab === 'approve' && styles.tabTextActive]}>Approve</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabButton, activeReviewTab === 'disapprove' && styles.tabButtonActive]}
+                onPress={() => setActiveReviewTab('disapprove')}
+              >
+                <Text style={[styles.tabText, activeReviewTab === 'disapprove' && styles.tabTextActive]}>Disapprove</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.assignModalBody} showsVerticalScrollIndicator={false}>
+              
+              {/* Remarks/Minute */}
+              <View style={{ marginBottom: 20 }}>
+                <Text style={styles.inputLabel}>{activeReviewTab === 'approve' ? 'Resolution Remarks' : 'Disapproval Reason'} <Text style={{color:'#ef4444'}}>*</Text></Text>
+                
+                {activeReviewTab === 'approve' && (
+                  <View style={styles.suggestionsContainer}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                      {['Complaint resolved.', 'Issue fixed.', 'Action taken.'].map((suggestion, idx) => (
+                        <TouchableOpacity 
+                          key={idx} 
+                          style={styles.suggestionChip}
+                          onPress={() => setReviewRemarks(suggestion)}
+                        >
+                          <Text style={styles.suggestionChipText}>{suggestion}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
+                <TextInput
+                  style={[styles.textInput, styles.textArea]}
+                  multiline
+                  placeholder={`Type your ${activeReviewTab === 'approve' ? 'resolution remarks' : 'disapproval reason'}...`}
+                  placeholderTextColor="#9ca3af"
+                  value={reviewRemarks}
+                  onChangeText={setReviewRemarks}
+                  maxLength={500}
+                />
+                <Text style={styles.charCountText}>
+                  {reviewRemarks.length}/500 {reviewRemarks.length < 5 ? '(min 5 chars)' : ''}
+                </Text>
+              </View>
+
+              <TouchableOpacity 
+                style={[styles.submitAssignBtn, {backgroundColor: activeReviewTab === 'approve' ? '#10b981' : '#ef4444'}, isReviewing && styles.submitAssignBtnDisabled]} 
+                onPress={handleReviewSubmit}
+                disabled={isReviewing}
+                activeOpacity={0.8}
+              >
+                {isReviewing ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.submitAssignBtnText}>{activeReviewTab === 'approve' ? 'Resolve Complaint' : 'Disapprove & Return'}</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -462,7 +915,11 @@ export function ComplaintDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#0B2046',
+  },
+  mainContent: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
   },
   loadingContainer: {
     flex: 1,
@@ -488,7 +945,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   backButtonText: {
-    color: '#2563eb',
+    color: '#0B2046',
     fontWeight: '600',
     fontSize: 15,
   },
@@ -496,26 +953,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    paddingVertical: 16,
+    backgroundColor: '#0B2046',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
   },
   backButton: {
     padding: 8,
-    marginRight: 8,
+    marginRight: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
   },
   backIcon: {
-    fontSize: 24,
-    color: '#111827',
+    fontSize: 20,
+    color: '#ffffff',
   },
   headerTitleContainer: {
     flex: 1,
   },
   headerTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#9ca3af',
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
     letterSpacing: 1,
   },
   scrollContent: {
@@ -544,7 +1006,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   numberBadgeText: {
-    color: '#2563eb',
+    color: '#0B2046',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -554,15 +1016,17 @@ const styles = StyleSheet.create({
   },
   statsCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#f3f4f6',
-    marginBottom: 20,
-    overflow: 'hidden',
+    borderRadius: 16,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
   statsRow: {
     flexDirection: 'row',
-    padding: 16,
+    padding: 20,
   },
   statsDivider: {
     height: 1,
@@ -572,10 +1036,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   statLabel: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
     color: '#9ca3af',
-    marginBottom: 4,
+    marginBottom: 6,
     letterSpacing: 0.5,
   },
   statValueRow: {
@@ -583,13 +1047,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statIcon: {
-    fontSize: 12,
-    marginRight: 6,
-    opacity: 0.7,
+    fontSize: 16,
+    marginRight: 8,
   },
   statValue: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
     color: '#111827',
     flex: 1,
   },
@@ -606,21 +1069,25 @@ const styles = StyleSheet.create({
     color: '#4b5563',
   },
   tabsContainer: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    marginBottom: 20,
-  },
-  tabsScroll: {
     flexDirection: 'row',
+    backgroundColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 24,
   },
   tabButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
   },
   tabButtonActive: {
-    borderBottomColor: '#2563eb',
+    backgroundColor: '#ffffff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   tabText: {
     fontSize: 14,
@@ -628,32 +1095,33 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   tabTextActive: {
-    color: '#2563eb',
+    color: '#0B2046',
   },
   tabContent: {
-    gap: 16,
+    gap: 20,
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    overflow: 'hidden',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
   cardHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#f9fafb',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: '#f3f4f6',
   },
   cardHeaderTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#374151',
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
   },
   cardBody: {
-    padding: 16,
+    padding: 20,
   },
   descriptionText: {
     fontSize: 15,
@@ -766,10 +1234,13 @@ const styles = StyleSheet.create({
   tlCard: {
     flex: 1,
     backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 3,
   },
   tlCardHeader: {
     flexDirection: 'row',
@@ -919,10 +1390,13 @@ const styles = StyleSheet.create({
   },
   commentCard: {
     backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   commentHeader: {
     flexDirection: 'row',
@@ -959,5 +1433,146 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: '#374151',
+  },
+  actionRow: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  assignButtonPrimary: {
+    backgroundColor: '#0B2046',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#0B2046',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  assignButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  assignModalContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    maxHeight: '80%',
+    overflow: 'hidden',
+  },
+  assignModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  assignModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+  },
+  closeIcon: {
+    fontSize: 20,
+    color: '#6b7280',
+    padding: 4,
+  },
+  assignModalBody: {
+    padding: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+    marginTop: 16,
+  },
+  headListContainer: {
+    maxHeight: 180,
+  },
+  headItemButton: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    marginBottom: 8,
+    backgroundColor: '#ffffff',
+  },
+  headItemButtonActive: {
+    borderColor: '#0B2046',
+    backgroundColor: '#eff6ff',
+  },
+  headItemText: {
+    fontSize: 15,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  headItemTextActive: {
+    color: '#1d4ed8',
+    fontWeight: '700',
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 15,
+    color: '#111827',
+    backgroundColor: '#f9fafb',
+  },
+  textArea: {
+    height: 100,
+  },
+  submitAssignBtn: {
+    backgroundColor: '#10b981',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 30,
+    marginBottom: 50,
+  },
+  submitAssignBtnDisabled: {
+    backgroundColor: '#9ca3af',
+  },
+  submitAssignBtnText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  suggestionsContainer: {
+    marginBottom: 4,
+  },
+  suggestionsLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 8,
+  },
+  suggestionChip: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  suggestionChipText: {
+    fontSize: 12,
+    color: '#374151',
+  },
+  charCountText: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'right',
+    marginTop: 4,
   },
 });
