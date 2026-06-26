@@ -15,6 +15,7 @@ import {
   Alert,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { pick, types, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { DashboardService, CMSComplaintDetail, CMSUser, CMSDepartment } from '../../services/DashboardService';
 import { AuthService } from '../../services/AuthService';
@@ -82,6 +83,18 @@ export function ComplaintDetailScreen() {
   const [reviewRemarks, setReviewRemarks] = useState<string>('');
   const [isReviewing, setIsReviewing] = useState(false);
 
+  // Add Comment State
+  const [newCommentText, setNewCommentText] = useState('');
+  const [newCommentAttachment, setNewCommentAttachment] = useState<any>(null);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+
+  // Contact Reporter State
+  const [newContactMessage, setNewContactMessage] = useState('');
+  const [newContactAttachment, setNewContactAttachment] = useState<any>(null);
+  const [notifyByEmail, setNotifyByEmail] = useState(false);
+  const [notifyBySms, setNotifyBySms] = useState(false);
+  const [isSubmittingContact, setIsSubmittingContact] = useState(false);
+
   const minuteSuggestions = [
     'Kindly attend to this urgently.',
     'Immediate attention is required.',
@@ -142,6 +155,128 @@ export function ComplaintDetailScreen() {
     setShowAssignModal(true);
     setAssignRemarks('');
     fetchAssignmentData();
+  };
+
+  const handlePickDocument = async () => {
+    try {
+      const res = await pick({
+        type: [types.allFiles],
+        allowMultiSelection: false,
+      });
+      if (res && res.length > 0) {
+        setNewCommentAttachment(res[0]);
+      }
+    } catch (err) {
+      if (isErrorWithCode(err) && err.code === errorCodes.OPERATION_CANCELED) {
+        // User cancelled, do nothing
+      } else {
+        console.error('Unknown Error picking file:', err);
+      }
+    }
+  };
+
+  const handlePickContactDocument = async () => {
+    try {
+      const res = await pick({
+        type: [types.allFiles],
+        allowMultiSelection: false,
+      });
+      if (res && res.length > 0) {
+        setNewContactAttachment(res[0]);
+      }
+    } catch (err) {
+      if (isErrorWithCode(err) && err.code === errorCodes.OPERATION_CANCELED) {
+        // User cancelled, do nothing
+      } else {
+        console.error('Unknown Error picking file:', err);
+      }
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!newCommentText.trim() && !newCommentAttachment) return;
+    
+    try {
+      setIsSubmittingComment(true);
+      let attachments: any[] = [];
+      
+      if (newCommentAttachment) {
+        const uploadResult = await DashboardService.uploadComplaintAttachment({
+          uri: newCommentAttachment.uri,
+          type: newCommentAttachment.type || 'application/octet-stream',
+          name: newCommentAttachment.name || 'attachment_file',
+        }, complaint!.id);
+        
+        attachments.push({
+          fileName: newCommentAttachment.name,
+          storedFileName: uploadResult.storedFileName || uploadResult.fileName || uploadResult.data?.storedFileName || uploadResult.data?.fileName,
+          contentType: newCommentAttachment.type,
+          fileSizeInBytes: newCommentAttachment.size || 0,
+          storagePath: uploadResult.storagePath || uploadResult.data?.storagePath || null,
+        });
+      }
+
+      await DashboardService.addComment(complaint!.id, {
+        commentText: newCommentText.trim(),
+        visibility: 1, // Official visibility
+        attachments,
+      });
+
+      Alert.alert('Success', 'Comment added successfully.');
+      setNewCommentText('');
+      setNewCommentAttachment(null);
+      if (complaintNumber) fetchDetails(complaintNumber);
+    } catch (error: any) {
+      console.error('Failed to add comment:', error);
+      const errMsg = error?.response?.data?.message || error?.response?.data || error.message;
+      Alert.alert('Error', `Failed to add comment: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
+  const handleAddContactMessage = async () => {
+    if (!newContactMessage.trim() && !newContactAttachment) return;
+    try {
+      setIsSubmittingContact(true);
+      let attachments: any[] = [];
+      
+      if (newContactAttachment) {
+        const uploadResult = await DashboardService.uploadComplaintAttachment({
+          uri: newContactAttachment.uri,
+          type: newContactAttachment.type || 'application/octet-stream',
+          name: newContactAttachment.name || 'attachment_file',
+        }, complaint!.id);
+        
+        attachments.push({
+          fileName: newContactAttachment.name,
+          storedFileName: uploadResult.storedFileName || uploadResult.fileName || uploadResult.data?.storedFileName || uploadResult.data?.fileName,
+          contentType: newContactAttachment.type,
+          fileSizeInBytes: newContactAttachment.size || 0,
+          storagePath: uploadResult.storagePath || uploadResult.data?.storagePath || null,
+        });
+      }
+
+      await DashboardService.addContactReporterMessage(complaint!.id, {
+        messageText: newContactMessage.trim(),
+        notifyByEmail,
+        notifyBySms,
+        attachments,
+      });
+
+      Alert.alert('Success', 'Message sent successfully.');
+      setNewContactMessage('');
+      setNewContactAttachment(null);
+      setNotifyByEmail(false);
+      setNotifyBySms(false);
+      if (complaintNumber) fetchDetails(complaintNumber);
+    } catch (error: any) {
+      console.error('Failed to send message:', error);
+      const errMsg = error?.response?.data?.message || error?.response?.data || error.message;
+      Alert.alert('Error', `Failed to send message: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
+    } finally {
+      setIsSubmittingContact(false);
+    }
   };
 
   const handleAssignSubmit = async () => {
@@ -249,6 +384,10 @@ export function ComplaintDetailScreen() {
       setIsLoading(true);
       const data = await DashboardService.getComplaintByNumber(ticketNo);
       setComplaint(data);
+      if (data) {
+        setNotifyByEmail(!!data.reporterEmail);
+        setNotifyBySms(!!data.reporterMobile);
+      }
     } catch (error) {
       console.error('Failed to load complaint details:', error);
     } finally {
@@ -304,6 +443,7 @@ export function ComplaintDetailScreen() {
     { id: 'overview', label: 'Overview' },
     { id: 'timeline', label: `Timeline ${unifiedTimeline.length}` },
     { id: 'comments', label: `Comments ${complaint.comments?.length || 0}` },
+    { id: 'contactReporter', label: `Contact ${complaint.contactReporterMessages?.length || 0}` },
   ];
 
   return (
@@ -389,11 +529,11 @@ export function ComplaintDetailScreen() {
                 <View style={styles.infoRow}>
                   <View style={styles.infoCol}>
                     <Text style={styles.infoLabel}>FULL NAME</Text>
-                    <Text style={styles.infoValue}>{complaint.reporterName || 'N/A'}</Text>
+                    <Text style={styles.infoValue}>{complaint.reporterName || '-'}</Text>
                   </View>
                   <View style={styles.infoCol}>
                     <Text style={styles.infoLabel}>NIC</Text>
-                    <Text style={styles.infoValue}>{complaint.reporterNic || 'N/A'}</Text>
+                    <Text style={styles.infoValue}>{complaint.reporterNic || '-'}</Text>
                   </View>
                 </View>
 
@@ -403,19 +543,40 @@ export function ComplaintDetailScreen() {
                 <View style={styles.infoRow}>
                   <View style={styles.infoCol}>
                     <Text style={styles.infoLabel}>MOBILE</Text>
-                    <Text style={styles.infoValue}>{complaint.reporterMobile || 'N/A'}</Text>
+                    <Text style={styles.infoValue}>{complaint.reporterMobile || '-'}</Text>
                   </View>
                   <View style={styles.infoCol}>
                     <Text style={styles.infoLabel}>EMAIL</Text>
-                    <Text style={styles.infoValue}>{complaint.reporterEmail || 'N/A'}</Text>
+                    <Text style={styles.infoValue}>{complaint.reporterEmail || '-'}</Text>
                   </View>
                 </View>
                 <View style={[styles.infoRow, { marginTop: 16 }]}>
                   <View style={styles.infoCol}>
                     <Text style={styles.infoLabel}>ADDRESS</Text>
-                    <Text style={styles.infoValue}>{complaint.reporterAddress || 'N/A'}</Text>
+                    <Text style={styles.infoValue}>{complaint.reporterAddress || '-'}</Text>
                   </View>
                 </View>
+                
+                {(complaint.reporterMobile || complaint.reporterEmail) && (
+                  <View style={{ marginTop: 24, flexDirection: 'row', justifyContent: 'space-between' }}>
+                    {complaint.reporterMobile ? (
+                      <TouchableOpacity 
+                        style={[styles.submitAssignBtn, { flex: 1, backgroundColor: '#0B2046', paddingVertical: 12, borderRadius: 8, marginRight: complaint.reporterEmail ? 8 : 0 }]}
+                        onPress={() => Linking.openURL(`tel:${complaint.reporterMobile}`)}
+                      >
+                        <Text style={[styles.submitAssignBtnText, { fontSize: 13 }]}>📞 Call Reporter</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                    {complaint.reporterEmail ? (
+                      <TouchableOpacity 
+                        style={[styles.submitAssignBtn, { flex: 1, backgroundColor: '#0ea5e9', paddingVertical: 12, borderRadius: 8, marginLeft: complaint.reporterMobile ? 8 : 0 }]}
+                        onPress={() => Linking.openURL(`mailto:${complaint.reporterEmail}`)}
+                      >
+                        <Text style={[styles.submitAssignBtnText, { fontSize: 13 }]}>✉️ Email Reporter</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                )}
               </View>
             </View>
 
@@ -627,15 +788,175 @@ export function ComplaintDetailScreen() {
         )}
 
         {/* Tab Content - Placeholder for others */}
-        {activeTab !== 'overview' && activeTab !== 'timeline' && activeTab !== 'comments' && (
+        {activeTab !== 'overview' && activeTab !== 'timeline' && activeTab !== 'comments' && activeTab !== 'contactReporter' && (
           <View style={styles.emptyStateContainer}>
             <Text style={styles.emptyText}>This section is under development.</Text>
+          </View>
+        )}
+
+        {/* Tab Content - Contact Reporter */}
+        {activeTab === 'contactReporter' && (
+          <View style={styles.tabContent}>
+            {/* Contact Input Area */}
+            <View style={[styles.commentInputContainer, { marginBottom: 16, borderTopWidth: 0, borderRadius: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3 }]}>
+              {newContactAttachment && (
+                <View style={styles.commentAttachmentPreview}>
+                  <Text style={styles.commentAttachmentPreviewText} numberOfLines={1}>{newContactAttachment.name}</Text>
+                  <TouchableOpacity onPress={() => setNewContactAttachment(null)}>
+                    <Text style={styles.commentAttachmentRemoveText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <View style={styles.commentInputRow}>
+                <TouchableOpacity style={styles.attachBtn} onPress={handlePickContactDocument}>
+                  <Text style={styles.attachBtnText}>📎</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={[styles.commentInputField, { marginLeft: 0 }]}
+                  placeholder="Type a message to the reporter..."
+                  value={newContactMessage}
+                  onChangeText={setNewContactMessage}
+                  multiline
+                  maxLength={500}
+                />
+              </View>
+              <View style={{ flexDirection: 'column', marginTop: 12, gap: 12 }}>
+                <View style={{ flexDirection: 'column', gap: 8 }}>
+                  <TouchableOpacity 
+                    onPress={() => complaint.reporterEmail && setNotifyByEmail(!notifyByEmail)} 
+                    style={{ flexDirection: 'row', alignItems: 'center', opacity: complaint.reporterEmail ? 1 : 0.5 }}
+                    disabled={!complaint.reporterEmail}
+                  >
+                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: '#0B2046', alignItems: 'center', justifyContent: 'center', marginRight: 6, backgroundColor: notifyByEmail ? '#0B2046' : 'transparent' }}>
+                      {notifyByEmail && <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>✓</Text>}
+                    </View>
+                    <Text style={{ fontSize: 13, color: '#374151', fontWeight: '500' }}>Email</Text>
+                    <Text style={{ fontSize: 13, color: '#6b7280', marginLeft: 6 }}>{complaint.reporterEmail ? `(${complaint.reporterEmail})` : '(Not available)'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    onPress={() => complaint.reporterMobile && setNotifyBySms(!notifyBySms)} 
+                    style={{ flexDirection: 'row', alignItems: 'center', opacity: complaint.reporterMobile ? 1 : 0.5 }}
+                    disabled={!complaint.reporterMobile}
+                  >
+                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: '#0B2046', alignItems: 'center', justifyContent: 'center', marginRight: 6, backgroundColor: notifyBySms ? '#0B2046' : 'transparent' }}>
+                      {notifyBySms && <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>✓</Text>}
+                    </View>
+                    <Text style={{ fontSize: 13, color: '#374151', fontWeight: '500' }}>SMS</Text>
+                    <Text style={{ fontSize: 13, color: '#6b7280', marginLeft: 6 }}>{complaint.reporterMobile ? `(${complaint.reporterMobile})` : '(Not available)'}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                  <TouchableOpacity 
+                    style={[styles.commentSendBtn, (!newContactMessage.trim() && !newContactAttachment) && { opacity: 0.5 }]} 
+                    onPress={handleAddContactMessage}
+                    disabled={isSubmittingContact || (!newContactMessage.trim() && !newContactAttachment)}
+                  >
+                    {isSubmittingContact ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.commentSendBtnText}>Send Request</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            {complaint.contactReporterMessages && complaint.contactReporterMessages.length > 0 ? (
+              complaint.contactReporterMessages.map((msg: any, idx: number) => (
+                <View key={idx} style={styles.commentCard}>
+                  <View style={styles.commentHeader}>
+                    <View style={styles.commentAvatar}>
+                      <Text style={styles.commentAvatarText}>{msg.senderName ? msg.senderName.charAt(0).toUpperCase() : 'U'}</Text>
+                    </View>
+                    <View style={styles.commentAuthorInfo}>
+                      <Text style={styles.commentAuthor}>{msg.senderName || 'Unknown Sender'}</Text>
+                      <Text style={styles.commentDate}>{formatDate(msg.messageAt)}</Text>
+                    </View>
+                  </View>
+                  {!!msg.messageText && <Text style={styles.commentText}>{msg.messageText}</Text>}
+                  
+                  {/* Render Message Attachments */}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <View style={styles.commentAttachmentsContainer}>
+                      {msg.attachments.map((att: any, attIdx: number) => {
+                        const url = att.storagePath || att.url || att.storedFileName;
+                        const isImg = url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(url);
+                        return (
+                          <TouchableOpacity 
+                            key={attIdx} 
+                            style={styles.commentAttachmentItem}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              if (url) {
+                                if (isImg) setSelectedImage(url);
+                                else Linking.openURL(url);
+                              }
+                            }}
+                          >
+                            <Text style={styles.commentAttachmentIcon}>📎</Text>
+                            <Text style={styles.commentAttachmentName} numberOfLines={1}>
+                              {att.fileName || `Attachment ${attIdx + 1}`}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  <View style={{ flexDirection: 'row', marginTop: 8, gap: 12 }}>
+                    {msg.notifyByEmail && <Text style={{ fontSize: 11, color: '#0ea5e9' }}>📧 Notified via Email</Text>}
+                    {msg.notifyBySms && <Text style={{ fontSize: 11, color: '#10b981' }}>📱 Notified via SMS</Text>}
+                  </View>
+                </View>
+              ))
+            ) : (
+              <View style={styles.emptyStateContainer}>
+                <Text style={styles.emptyText}>No contact messages available.</Text>
+              </View>
+            )}
           </View>
         )}
 
         {/* Tab Content - Comments */}
         {activeTab === 'comments' && (
           <View style={styles.tabContent}>
+            {/* Comment Input Area */}
+            <View style={[styles.commentInputContainer, { marginBottom: 16, borderTopWidth: 0, borderRadius: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3 }]}>
+              {newCommentAttachment && (
+                <View style={styles.commentAttachmentPreview}>
+                  <Text style={styles.commentAttachmentPreviewText} numberOfLines={1}>{newCommentAttachment.name}</Text>
+                  <TouchableOpacity onPress={() => setNewCommentAttachment(null)}>
+                    <Text style={styles.commentAttachmentRemoveText}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <View style={styles.commentInputRow}>
+                <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument}>
+                  <Text style={styles.attachBtnText}>📎</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={styles.commentInputField}
+                  placeholder="Type a comment..."
+                  value={newCommentText}
+                  onChangeText={setNewCommentText}
+                  multiline
+                  maxLength={500}
+                />
+                <TouchableOpacity 
+                  style={[styles.commentSendBtn, (!newCommentText.trim() && !newCommentAttachment) && { opacity: 0.5 }]} 
+                  onPress={handleAddComment}
+                  disabled={isSubmittingComment || (!newCommentText.trim() && !newCommentAttachment)}
+                >
+                  {isSubmittingComment ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.commentSendBtnText}>Send</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {complaint.comments && complaint.comments.length > 0 ? (
               complaint.comments.map((comment: any, idx: number) => (
                 <View key={idx} style={styles.commentCard}>
@@ -649,6 +970,34 @@ export function ComplaintDetailScreen() {
                     </View>
                   </View>
                   <Text style={styles.commentText}>{comment.text}</Text>
+                  
+                  {/* Render Comment Attachments */}
+                  {comment.attachments && comment.attachments.length > 0 && (
+                    <View style={styles.commentAttachmentsContainer}>
+                      {comment.attachments.map((att: any, attIdx: number) => {
+                        const url = att.storagePath || att.url || att.storedFileName;
+                        const isImg = url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(url);
+                        return (
+                          <TouchableOpacity 
+                            key={attIdx} 
+                            style={styles.commentAttachmentItem}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              if (url) {
+                                if (isImg) setSelectedImage(url);
+                                else Linking.openURL(url);
+                              }
+                            }}
+                          >
+                            <Text style={styles.commentAttachmentIcon}>📎</Text>
+                            <Text style={styles.commentAttachmentName} numberOfLines={1}>
+                              {att.fileName || `Attachment ${attIdx + 1}`}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
                 </View>
               ))
             ) : (
@@ -658,7 +1007,6 @@ export function ComplaintDetailScreen() {
             )}
           </View>
         )}
-
       </ScrollView>
       </View>
 
@@ -1575,4 +1923,96 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: 4,
   },
+  commentInputContainer: {
+    padding: 16,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    marginTop: 'auto',
+  },
+  commentInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  commentInputField: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 15,
+    maxHeight: 100,
+    color: '#1f2937',
+  },
+  attachBtn: {
+    padding: 10,
+    marginRight: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachBtnText: {
+    fontSize: 18,
+  },
+  commentSendBtn: {
+    marginLeft: 12,
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentSendBtnText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  commentAttachmentPreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 8,
+    justifyContent: 'space-between',
+  },
+  commentAttachmentPreviewText: {
+    color: '#1d4ed8',
+    flex: 1,
+    fontSize: 13,
+  },
+  commentAttachmentRemoveText: {
+    color: '#b91c1c',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 8,
+    paddingHorizontal: 4,
+  },
+  commentAttachmentsContainer: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    paddingTop: 8,
+  },
+  commentAttachmentItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 6,
+  },
+  commentAttachmentIcon: {
+    fontSize: 14,
+    marginRight: 8,
+  },
+  commentAttachmentName: {
+    fontSize: 13,
+    color: '#374151',
+    flex: 1,
+  }
 });

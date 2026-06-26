@@ -36,6 +36,7 @@ export interface CMSComplaintDetail extends CMSComplaintListItem {
   comments?: any[];
   statusHistory?: any[];
   assignments?: any[];
+  contactReporterMessages?: any[];
   assignedTo?: string;
   resolutionDueAt?: string;
 }
@@ -154,7 +155,7 @@ export const DashboardService = {
       attachments: (source.attachments || source.Attachments || []).map((a: any) => ({
         id: a.id || a.Id,
         fileName: a.fileName || a.FileName || 'Attachment',
-        url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || ''),
+        url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || a.storagePath || a.StoragePath || a.storedFileName || a.StoredFileName || ''),
       })),
       comments: (source.comments || source.Comments || []).map((c: any) => ({
         id: c.id || c.Id,
@@ -164,7 +165,7 @@ export const DashboardService = {
         attachments: (c.attachments || c.Attachments || []).map((a: any) => ({
           id: a.id || a.Id,
           fileName: a.fileName || a.FileName || 'Attachment',
-          url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || ''),
+          url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || a.storagePath || a.StoragePath || a.storedFileName || a.StoredFileName || ''),
         })),
       })),
       statusHistory: (source.statusHistory || source.StatusHistory || []).map((h: any) => ({
@@ -177,10 +178,27 @@ export const DashboardService = {
         attachments: (h.attachments || h.Attachments || []).map((a: any) => ({
           id: a.id || a.Id,
           fileName: a.fileName || a.FileName || 'Attachment',
-          url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || ''),
+          url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || a.storagePath || a.StoragePath || a.storedFileName || a.StoredFileName || ''),
         })),
       })),
       assignments: source.assignments || source.Assignments || [],
+      contactReporterMessages: (source.contactReporterMessages || source.ContactReporterMessages || []).map((m: any) => ({
+        id: m.id || m.Id,
+        sender: m.sender || m.Sender || 0,
+        senderUserId: m.senderUserId || m.SenderUserId || null,
+        senderName: m.senderName || m.SenderName || null,
+        messageText: m.messageText || m.MessageText || '',
+        notifyByEmail: m.notifyByEmail || m.NotifyByEmail || false,
+        notifyBySms: m.notifyBySms || m.NotifyBySms || false,
+        emailRecipient: m.emailRecipient || m.EmailRecipient || null,
+        mobileRecipient: m.mobileRecipient || m.MobileRecipient || null,
+        messageAt: m.messageAt || m.MessageAt || new Date().toISOString(),
+        attachments: (m.attachments || m.Attachments || []).map((a: any) => ({
+          id: a.id || a.Id,
+          fileName: a.fileName || a.FileName || a.description || a.Description || 'Attachment',
+          url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || a.storagePath || a.StoragePath || a.storedFileName || a.StoredFileName || ''),
+        })),
+      })),
     } as CMSComplaintDetail;
   },
 
@@ -235,6 +253,67 @@ export const DashboardService = {
    * Update complaint status (e.g. resolve)
    */
   async updateComplaintStatus(id: number, payload: { status: number; remarks?: string; resolutionSummary?: string; feedbackRating?: number | null; feedbackComment?: string | null }): Promise<void> {
-    await ApiService.post<CMSApiResponse<any>>(`/cms/complaints/${id}/status`, payload);
+    await ApiService.put<any>(`/cms/complaints/${id}/status`, payload);
+  },
+
+  /**
+   * Upload an attachment for a complaint comment
+   */
+  async uploadComplaintAttachment(file: any, complaintId: number): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file as any);
+    formData.append('complaintId', complaintId.toString());
+
+    const response = await ApiService.post<any>('/files/upload/complaint', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      transformRequest: (data, headers: any) => {
+        // Unset the explicit Content-Type so Axios/React Native can auto-set the boundary
+        delete headers['Content-Type'];
+        return data;
+      }
+    });
+    return response.data;
+  },
+
+  /**
+   * Add a comment to a complaint
+   */
+  async addComment(id: number, payload: { commentText: string; visibility: number; attachments?: any[] }): Promise<any> {
+    const requestPayload = {
+      commentText: payload.commentText,
+      visibility: payload.visibility,
+      attachments: (payload.attachments || []).map((attachment: any) => {
+        const fileName = attachment.fileName || attachment.FileName || '';
+        const rawDescription = attachment.description || attachment.Description || fileName || '';
+        return {
+          fileName,
+          storedFileName: attachment.storedFileName || attachment.StoredFileName || attachment.storagePath || attachment.StoragePath || '',
+          contentType: attachment.contentType || attachment.ContentType || 'application/octet-stream',
+          fileSizeInBytes: attachment.fileSizeInBytes || attachment.FileSizeInBytes || 0,
+          storagePath: attachment.storagePath || attachment.StoragePath || attachment.storedFileName || attachment.StoredFileName || null,
+          description: rawDescription ? rawDescription.substring(0, 20) : null
+        };
+      })
+    };
+
+    const response = await ApiService.post<any>(`/cms/complaints/${id}/comments`, requestPayload);
+    return response.data?.data || response.data;
+  },
+
+  /**
+   * Add a new Contact Reporter Message
+   */
+  async addContactReporterMessage(id: number, payload: { messageText: string; notifyByEmail: boolean; notifyBySms: boolean; attachments?: any[] }): Promise<any> {
+    const requestPayload = {
+      messageText: payload.messageText,
+      notifyByEmail: payload.notifyByEmail,
+      notifyBySms: payload.notifyBySms,
+      attachments: payload.attachments || []
+    };
+
+    const response = await ApiService.post<any>(`/cms/complaints/${id}/contact-reporter`, requestPayload);
+    return response.data;
   }
 };

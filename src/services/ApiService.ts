@@ -63,11 +63,11 @@ export const ApiService = {
   get<T>(path: string, params?: Record<string, any>) {
     return axiosInstance.get<T>(path, { params });
   },
-  post<T>(path: string, body: any) {
-    return axiosInstance.post<T>(path, body);
+  post<T>(path: string, body: any, config?: any) {
+    return axiosInstance.post<T>(path, body, config);
   },
-  put<T>(path: string, body: any) {
-    return axiosInstance.put<T>(path, body);
+  put<T>(path: string, body: any, config?: any) {
+    return axiosInstance.put<T>(path, body, config);
   },
   delete<T>(path: string) {
     return axiosInstance.delete<T>(path);

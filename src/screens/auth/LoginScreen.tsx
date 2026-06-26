@@ -178,7 +178,7 @@ export function LoginScreen({ onLoginSuccess }: Props) {
           <View style={styles.headerBranding}>
             <Image
               source={require('../../assets/logos/cat20.png')}
-              style={styles.logoImage}
+              style={[styles.logoImage, { tintColor: '#ffffff' }]}
               resizeMode="contain"
             />
             <View style={styles.titleRow}>

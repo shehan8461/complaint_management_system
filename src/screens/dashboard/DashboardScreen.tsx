@@ -18,7 +18,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthService } from '../../services/AuthService';
 import { DashboardService, CMSDashboardSummary, CMSComplaintListItem } from '../../services/DashboardService';
@@ -45,7 +45,7 @@ function getStatusDisplay(status: number): { label: string; color: string; bg: s
 
 function getFullStatusLabel(status: number): string {
   switch (status) {
-    case 1: return 'Pending (Unassigned)';
+    case 1: return 'Pending';
     case 2: return 'Assigned to Department Head';
     case 3: return 'Assigned to Subject';
     case 4: return 'Reassigned to Department Head';
@@ -170,19 +170,16 @@ export function DashboardScreen() {
 
       setComplaints(complaintsData.items || []);
 
-      // Build dropdown options dynamically based on the dataset
       const items = complaintsData.items || [];
-      const statuses = Array.from(new Set(items.map(c => getFullStatusLabel(c.status)))).filter(Boolean).sort();
       const dynamicServices = Array.from(new Set(items.map(c => c.serviceName || c.category))).filter(Boolean).sort();
 
-      // Ensure "Current Tenant" is always available as an option
-      const services = dynamicServices.includes('Current Tenant')
-        ? dynamicServices
-        : ['Current Tenant', ...dynamicServices];
+      const services = dynamicServices.filter(s => s !== 'Current Tenant');
 
-      const finalStatuses = statuses.includes('Pending (Unassigned)')
+      // Build statuses dynamically like web code
+      const statuses = Array.from(new Set(items.map(c => getFullStatusLabel(c.status)))).filter(Boolean).sort();
+      const finalStatuses = statuses.includes('Pending')
         ? statuses
-        : ['Pending (Unassigned)', ...statuses];
+        : ['Pending', ...statuses];
 
       setStatusOptions(['All Statuses', ...finalStatuses]);
       setServiceOptions(['All Services', ...services]);
@@ -201,9 +198,11 @@ export function DashboardScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
 
   const onRefresh = () => {
     setIsRefreshing(true);
@@ -427,10 +426,20 @@ export function DashboardScreen() {
     );
   };
 
-  const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
+    const renderComplaintItem = ({ item }: { item: CMSComplaintListItem }) => {
     const statusInfo = getStatusDisplay(item.status);
     const ticketNo = item.complaintNumber || (item as any).ticketNo || (item as any).TicketNo;
     const isCritical = (item as any).isCritical === true || item.priority === 4 || (item as any).priority === 'Critical' || (item as any).priorityCode === 4;
+    
+    // Extract assignee name if available
+    const assigneeName = (item as any).currentAssigneeName || (item as any).CurrentAssigneeName || (item as any).assignedTo || (item as any).AssignedTo;
+    
+    // Customize badge text if it's assigned and we have an assignee name
+    let badgeLabel = statusInfo.label;
+    if ((item.status === 2 || item.status === 3 || item.status === 4 || item.status === 5) && assigneeName) {
+      badgeLabel = `${statusInfo.label}: ${assigneeName}`;
+    }
+
     return (
       <View style={[styles.complaintCard, { borderLeftWidth: 4, borderLeftColor: statusInfo.color }]}>
         <View style={styles.complaintHeader}>
@@ -443,7 +452,7 @@ export function DashboardScreen() {
             )}
           </View>
           <View style={[styles.badge, { backgroundColor: statusInfo.bg }]}>
-            <Text style={[styles.badgeText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
+            <Text style={[styles.badgeText, { color: statusInfo.color }]} numberOfLines={1}>{badgeLabel}</Text>
           </View>
         </View>
         <Text style={styles.complaintTitle} numberOfLines={2}>
@@ -503,7 +512,17 @@ export function DashboardScreen() {
                       key={option}
                       style={styles.dropdownItemCentered}
                       onPress={() => {
-                        if (activeDropdown === 'status') setSelectedStatus(option);
+                        if (activeDropdown === 'status') {
+                          setSelectedStatus(option);
+                          if (option !== 'All Statuses') {
+                            const group = getDashboardStatusGroup(option);
+                            if (group === 'new') setSelectedStatGroup('Pending');
+                            else if (group === 'resolved' || group === 'closed') setSelectedStatGroup('Resolved');
+                            else setSelectedStatGroup('In Progress');
+                          } else {
+                            setSelectedStatGroup(null);
+                          }
+                        }
                         else setSelectedService(option);
                         setActiveDropdown(null);
                       }}
@@ -594,7 +613,7 @@ export function DashboardScreen() {
             {/* Drawer Links */}
             <View style={styles.drawerLinksContainer}>
               <TouchableOpacity style={styles.drawerLinkActive} onPress={toggleDrawer}>
-                <Text style={styles.drawerLinkIconActive}>🏠</Text>
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/4338ca/dashboard.png' }} style={{ width: 20, height: 20, marginRight: 16 }} />
                 <Text style={styles.drawerLinkTextActive}>Dashboard</Text>
               </TouchableOpacity>
 
@@ -603,7 +622,7 @@ export function DashboardScreen() {
                 <View style={styles.drawerDivider} />
 
                 <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-                  <Text style={styles.logoutIcon}>🚪</Text>
+                  <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/ef4444/exit.png' }} style={{ width: 20, height: 20, marginRight: 16 }} />
                   <Text style={styles.logoutBtnText}>Logout</Text>
                 </TouchableOpacity>
                 
