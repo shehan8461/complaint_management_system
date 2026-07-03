@@ -78,7 +78,7 @@ export function DashboardScreen() {
 
   const [selectedStatus, setSelectedStatus] = useState<string>('All Statuses');
   const [selectedService, setSelectedService] = useState<string>('All Services');
-  const [selectedStatGroup, setSelectedStatGroup] = useState<string | null>(null);
+  const [selectedStatGroup, setSelectedStatGroup] = useState<string | null>('Pending');
 
   const [statusOptions, setStatusOptions] = useState<string[]>(['All Statuses']);
   const [serviceOptions, setServiceOptions] = useState<string[]>(['All Services']);
@@ -221,6 +221,11 @@ export function DashboardScreen() {
 
       const ticketNo = (c.complaintNumber || (c as any).ticketNo || (c as any).TicketNo || '').toString().toLowerCase();
       const matchesSearch = searchQuery === '' || ticketNo.includes(searchQuery.toLowerCase());
+      
+      // If user is searching by ID, bypass all other filters
+      if (searchQuery !== '') {
+        return matchesSearch;
+      }
 
       let matchesStatGroup = true;
       if (selectedStatGroup) {
@@ -237,7 +242,7 @@ export function DashboardScreen() {
         }
       }
 
-      return matchesStatus && matchesService && matchesSearch && matchesStatGroup;
+      return matchesStatus && matchesService && matchesStatGroup;
     });
   };
 
@@ -290,8 +295,8 @@ export function DashboardScreen() {
         {/* Welcome Section */}
         <View style={styles.welcomeSection}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.welcomeTitle}>Hello, {userEmail.split('@')[0]}!</Text>
-            <Text style={styles.welcomeSubtitle}>🛡️ Department Head</Text>
+            <Text style={styles.welcomeGreeting}>Welcome back,</Text>
+            <Text style={styles.welcomeTitle}>{userEmail.split('@')[0]}!</Text>
           </View>
           <View style={styles.dateBlock}>
             <View style={styles.dateIconCircle}>
@@ -319,7 +324,7 @@ export function DashboardScreen() {
                 style={[
                   styles.statCardCompact, 
                   { backgroundColor: '#fef2f2' },
-                  selectedStatGroup && selectedStatGroup !== 'Critical' ? { opacity: 0.4 } : {}
+                  selectedStatGroup === 'Critical' ? { borderWidth: 2, borderColor: '#ef4444', elevation: 5 } : { borderWidth: 2, borderColor: 'transparent' }
                 ]}
               >
                 <View style={[styles.statIconCircle, { backgroundColor: '#ef4444' }]}>
@@ -336,7 +341,7 @@ export function DashboardScreen() {
                 style={[
                   styles.statCardCompact, 
                   { backgroundColor: '#fff7ed' },
-                  selectedStatGroup && selectedStatGroup !== 'Pending' ? { opacity: 0.4 } : {}
+                  selectedStatGroup === 'Pending' ? { borderWidth: 2, borderColor: '#f97316', elevation: 5 } : { borderWidth: 2, borderColor: 'transparent' }
                 ]}
               >
                 <View style={[styles.statIconCircle, { backgroundColor: '#f97316' }]}>
@@ -353,7 +358,7 @@ export function DashboardScreen() {
                 style={[
                   styles.statCardCompact, 
                   { backgroundColor: '#faf5ff' },
-                  selectedStatGroup && selectedStatGroup !== 'In Progress' ? { opacity: 0.4 } : {}
+                  selectedStatGroup === 'In Progress' ? { borderWidth: 2, borderColor: '#a855f7', elevation: 5 } : { borderWidth: 2, borderColor: 'transparent' }
                 ]}
               >
                 <View style={[styles.statIconCircle, { backgroundColor: '#a855f7' }]}>
@@ -370,7 +375,7 @@ export function DashboardScreen() {
                 style={[
                   styles.statCardCompact, 
                   { backgroundColor: '#f0fdf4' },
-                  selectedStatGroup && selectedStatGroup !== 'Resolved' ? { opacity: 0.4 } : {}
+                  selectedStatGroup === 'Resolved' ? { borderWidth: 2, borderColor: '#22c55e', elevation: 5 } : { borderWidth: 2, borderColor: 'transparent' }
                 ]}
               >
                 <View style={[styles.statIconCircle, { backgroundColor: '#22c55e' }]}>
@@ -386,7 +391,7 @@ export function DashboardScreen() {
           {/* Search Bar */}
           <View style={styles.searchRow}>
             <View style={styles.searchInputWrapper}>
-              <Text style={styles.searchIcon}>🔍</Text>
+              <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/64748b/search--v1.png' }} style={{ width: 18, height: 18, marginRight: 10, opacity: 0.7 }} />
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search by Ticket Number..."
@@ -397,8 +402,8 @@ export function DashboardScreen() {
                 autoCorrect={false}
               />
               {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <Text style={{ fontSize: 16, color: '#94a3b8', paddingRight: 4 }}>✕</Text>
+                <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.searchClearBtn}>
+                  <Text style={{ fontSize: 12, color: '#ffffff', fontWeight: 'bold' }}>✕</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -561,7 +566,7 @@ export function DashboardScreen() {
         data={getFilteredComplaints()}
         keyExtractor={(item) => item.id.toString()}
         renderItem={renderComplaintItem}
-        ListHeaderComponent={renderHeader}
+        ListHeaderComponent={renderHeader()}
         contentContainerStyle={styles.listContent}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={['#2563eb']} />}
         ListEmptyComponent={
@@ -615,6 +620,31 @@ export function DashboardScreen() {
               <TouchableOpacity style={styles.drawerLinkActive} onPress={toggleDrawer}>
                 <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/4338ca/dashboard.png' }} style={{ width: 20, height: 20, marginRight: 16 }} />
                 <Text style={styles.drawerLinkTextActive}>Dashboard</Text>
+              </TouchableOpacity>
+
+              {/* User Management Section */}
+              <Text style={styles.drawerSectionTitle}>User Management</Text>
+              
+              <TouchableOpacity 
+                style={styles.drawerLinkInactive} 
+                onPress={() => {
+                  toggleDrawer();
+                  navigation.navigate('Profile');
+                }}
+              >
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/64748b/user-male-circle.png' }} style={{ width: 20, height: 20, marginRight: 16 }} />
+                <Text style={styles.drawerLinkTextInactive}>My Profile</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.drawerLinkInactive} 
+                onPress={() => {
+                  toggleDrawer();
+                  navigation.navigate('ChangePassword');
+                }}
+              >
+                <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/64748b/password.png' }} style={{ width: 20, height: 20, marginRight: 16 }} />
+                <Text style={styles.drawerLinkTextInactive}>Change Password</Text>
               </TouchableOpacity>
 
 
@@ -687,11 +717,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerLogoSmall: {
-    width: 40,
-    height: 40,
+    width: 48,
+    height: 48,
     marginRight: 10,
-    backgroundColor: '#fff',
-    borderRadius: 20,
+    tintColor: '#ffffff',
   },
   brandTitle: {
     fontSize: 16,
@@ -763,10 +792,17 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   welcomeTitle: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '800',
     color: '#ffffff',
-    marginBottom: 4,
+  },
+  welcomeGreeting: {
+    fontSize: 13,
+    color: '#cbd5e1',
+    fontWeight: '600',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   welcomeSubtitle: {
     fontSize: 12,
@@ -894,23 +930,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   searchIcon: {
-    fontSize: 16,
-    marginRight: 8,
+    fontSize: 18,
+    marginRight: 10,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
-    color: '#1e293b',
+    fontSize: 15,
+    color: '#0f172a',
+    fontWeight: '500',
+    padding: 0,
+  },
+  searchClearBtn: {
+    backgroundColor: '#cbd5e1',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
   },
 
   filtersRow: {
@@ -1188,6 +1237,16 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 24,
+  },
+  drawerSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 24,
+    marginBottom: 8,
+    marginLeft: 12,
   },
   drawerLinkActive: {
     flexDirection: 'row',

@@ -204,16 +204,7 @@ export function LoginScreen({ onLoginSuccess }: Props) {
           >
             {/* ── Main Login Card ───────────────────────────────────── */}
             <View style={styles.loginCard}>
-              <View style={styles.welcomeRow}>
-                <View style={styles.shieldIconLarge}>
-                  <Text style={{ fontSize: 22, color: '#fff' }}>🛡️</Text>
-                </View>
-                <View style={styles.welcomeTextCol}>
-                  <Text style={styles.welcomeTitle}>Welcome Back!</Text>
-                  <Text style={styles.welcomeSub}>Secure access for Department Heads</Text>
-                  <Text style={styles.welcomeSub}>and Subject Officers .</Text>
-                </View>
-              </View>
+
 
               {hasError && (
                 <View style={styles.alertBox}>

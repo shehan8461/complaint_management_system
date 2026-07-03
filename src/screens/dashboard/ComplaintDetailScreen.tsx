@@ -65,6 +65,7 @@ export function ComplaintDetailScreen() {
 
   // Assignment Feature State
   const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [departments, setDepartments] = useState<CMSDepartment[]>([]);
   const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
@@ -85,8 +86,13 @@ export function ComplaintDetailScreen() {
 
   // Add Comment State
   const [newCommentText, setNewCommentText] = useState('');
-  const [newCommentAttachment, setNewCommentAttachment] = useState<any>(null);
+  const [newCommentAttachments, setNewCommentAttachments] = useState<{file: any, description: string}[]>([]);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+
+  // Edit Comment State
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [isUpdatingComment, setIsUpdatingComment] = useState(false);
 
   // Contact Reporter State
   const [newContactMessage, setNewContactMessage] = useState('');
@@ -115,6 +121,7 @@ export function ComplaintDetailScreen() {
   const checkAdminStatus = async () => {
     const user = await AuthService.getMe();
     if (user) {
+      setCurrentUserId(user.id);
       setIsAdmin(!!(user.roles?.includes('9') || user.roles?.includes(9)));
     }
   };
@@ -157,14 +164,34 @@ export function ComplaintDetailScreen() {
     fetchAssignmentData();
   };
 
+  const sanitizeFileName = (fileName: string) => {
+    if (!fileName) return 'attachment_file';
+    const parts = fileName.split('.');
+    const ext = parts.length > 1 ? '.' + parts.pop() : '';
+    let base = parts.join('.');
+    
+    // If name is extremely long, truncate to last 40 characters (likely the original name without prefixes)
+    if (base.length > 40) {
+      base = base.substring(base.length - 40);
+    }
+    // Remove any leading underscores that might be left over from truncated GUIDs
+    base = base.replace(/^_+/, '');
+    if (!base) base = 'attachment';
+    return base + ext;
+  };
+
   const handlePickDocument = async () => {
     try {
       const res = await pick({
         type: [types.allFiles],
-        allowMultiSelection: false,
+        allowMultiSelection: true,
       });
       if (res && res.length > 0) {
-        setNewCommentAttachment(res[0]);
+        const newAtts = res.map(file => ({ 
+          file: { ...file, name: sanitizeFileName(file.name || '') }, 
+          description: '' 
+        }));
+        setNewCommentAttachments(prev => [...prev, ...newAtts]);
       }
     } catch (err) {
       if (isErrorWithCode(err) && err.code === errorCodes.OPERATION_CANCELED) {
@@ -194,25 +221,27 @@ export function ComplaintDetailScreen() {
   };
 
   const handleAddComment = async () => {
-    if (!newCommentText.trim() && !newCommentAttachment) return;
+    if (!newCommentText.trim() && newCommentAttachments.length === 0) return;
     
     try {
       setIsSubmittingComment(true);
       let attachments: any[] = [];
       
-      if (newCommentAttachment) {
+      for (const att of newCommentAttachments) {
+        const safeName = sanitizeFileName(att.file.name || 'attachment_file');
         const uploadResult = await DashboardService.uploadComplaintAttachment({
-          uri: newCommentAttachment.uri,
-          type: newCommentAttachment.type || 'application/octet-stream',
-          name: newCommentAttachment.name || 'attachment_file',
+          uri: att.file.uri,
+          type: att.file.type || 'application/octet-stream',
+          name: safeName,
         }, complaint!.id);
         
         attachments.push({
-          fileName: newCommentAttachment.name,
+          fileName: safeName,
           storedFileName: uploadResult.storedFileName || uploadResult.fileName || uploadResult.data?.storedFileName || uploadResult.data?.fileName,
-          contentType: newCommentAttachment.type,
-          fileSizeInBytes: newCommentAttachment.size || 0,
+          contentType: att.file.type,
+          fileSizeInBytes: att.file.size || 0,
           storagePath: uploadResult.storagePath || uploadResult.data?.storagePath || null,
+          description: att.description
         });
       }
 
@@ -224,7 +253,7 @@ export function ComplaintDetailScreen() {
 
       Alert.alert('Success', 'Comment added successfully.');
       setNewCommentText('');
-      setNewCommentAttachment(null);
+      setNewCommentAttachments([]);
       if (complaintNumber) fetchDetails(complaintNumber);
     } catch (error: any) {
       console.error('Failed to add comment:', error);
@@ -233,6 +262,88 @@ export function ComplaintDetailScreen() {
     } finally {
       setIsSubmittingComment(false);
     }
+  };
+
+  const handleEditComment = (comment: any) => {
+    setEditingCommentId(comment.id);
+    setEditingCommentText(comment.text);
+  };
+
+  const handleCancelEditComment = () => {
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  };
+
+  const handleUpdateComment = async (commentId: number) => {
+    if (!editingCommentText.trim()) {
+      Alert.alert('Validation', 'Comment text cannot be empty.');
+      return;
+    }
+    
+    try {
+      setIsUpdatingComment(true);
+      await DashboardService.updateComment(complaint!.id, commentId, {
+        commentText: editingCommentText.trim()
+      });
+      
+      setEditingCommentId(null);
+      setEditingCommentText('');
+      if (complaintNumber) fetchDetails(complaintNumber);
+    } catch (error: any) {
+      console.error('Failed to update comment:', error);
+      const errMsg = error?.response?.data?.message || error?.response?.data || error.message;
+      Alert.alert('Error', `Failed to update comment: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
+    } finally {
+      setIsUpdatingComment(false);
+    }
+  };
+
+  const handleDeleteComplaintAttachment = (attachmentId: number, fileName: string) => {
+    Alert.alert(
+      'Delete Attachment',
+      `Are you sure you want to remove "${fileName}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await DashboardService.deleteComplaintAttachment(complaint!.id, attachmentId);
+              if (complaintNumber) fetchDetails(complaintNumber);
+            } catch (error: any) {
+              console.error('Failed to delete attachment:', error);
+              const errMsg = error?.response?.data?.message || error?.response?.data || error.message;
+              Alert.alert('Error', `Failed to delete attachment: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleDeleteCommentAttachment = (commentId: number, attachmentId: number, fileName: string) => {
+    Alert.alert(
+      'Delete Attachment',
+      `Are you sure you want to remove "${fileName}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await DashboardService.deleteCommentAttachment(complaint!.id, commentId, attachmentId);
+              if (complaintNumber) fetchDetails(complaintNumber);
+            } catch (error: any) {
+              console.error('Failed to delete attachment:', error);
+              const errMsg = error?.response?.data?.message || error?.response?.data || error.message;
+              Alert.alert('Error', `Failed to delete attachment: ${typeof errMsg === 'object' ? JSON.stringify(errMsg) : errMsg}`);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleAddContactMessage = async () => {
@@ -415,6 +526,12 @@ export function ComplaintDetailScreen() {
     );
   }
 
+  // Sort comments by ID desc
+  const sortedComments = [...(complaint.comments || [])].sort((a, b) => b.id - a.id);
+
+  // Extract all attachments from all comments
+  const commentAttachments = (complaint.comments || []).flatMap(c => c.attachments || []);
+
   const statusInfo = getStatusDisplay(complaint.status);
   
   // Build unified timeline
@@ -441,9 +558,9 @@ export function ComplaintDetailScreen() {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
-    { id: 'timeline', label: `Timeline ${unifiedTimeline.length}` },
-    { id: 'comments', label: `Comments ${complaint.comments?.length || 0}` },
-    { id: 'contactReporter', label: `Contact ${complaint.contactReporterMessages?.length || 0}` },
+    { id: 'timeline', label: `Timeline (${unifiedTimeline.length})` },
+    { id: 'comments', label: `Comments (${complaint.comments?.length || 0})` },
+    { id: 'contactReporter', label: `Contact (${complaint.contactReporterMessages?.length || 0})` },
   ];
 
   return (
@@ -496,7 +613,12 @@ export function ComplaintDetailScreen() {
               onPress={() => setActiveTab(tab.id)}
               activeOpacity={0.7}
             >
-              <Text style={[styles.tabText, activeTab === tab.id && styles.tabTextActive]}>
+              <Text 
+                style={[styles.tabText, activeTab === tab.id && styles.tabTextActive]} 
+                numberOfLines={1} 
+                adjustsFontSizeToFit 
+                minimumFontScale={0.75}
+              >
                 {tab.label}
               </Text>
             </TouchableOpacity>
@@ -620,8 +742,69 @@ export function ComplaintDetailScreen() {
                   complaint.attachments.map((att: any, idx: number) => {
                     const isImg = att.url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(att.url);
                     return (
+                      <View key={idx} style={[styles.attachmentItem, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}>
+                        <TouchableOpacity 
+                          style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            if (att.url) {
+                              if (isImg) {
+                                setSelectedImage(att.url);
+                              } else {
+                                Linking.openURL(att.url).catch(err => console.error("Couldn't load page", err));
+                              }
+                            }
+                          }}
+                        >
+                          {isImg ? (
+                            <Image source={{ uri: att.url }} style={styles.attachmentPreview} resizeMode="cover" />
+                          ) : (
+                            <View style={styles.attachmentIcon}>
+                              <Text style={styles.attachmentIconText}>📎</Text>
+                            </View>
+                          )}
+                          <View style={{ flex: 1, justifyContent: 'center' }}>
+                            <Text style={styles.attachmentName} numberOfLines={1}>
+                              {att.fileName || `Attachment ${idx + 1}`}
+                            </Text>
+                            {!!att.description && (
+                              <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }} numberOfLines={2}>
+                                {att.description}
+                              </Text>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                        {isAdmin && (
+                          <TouchableOpacity 
+                            style={styles.deleteAttachmentBtn} 
+                            onPress={() => handleDeleteComplaintAttachment(att.id, att.fileName || `Attachment ${idx + 1}`)}
+                          >
+                            <Text style={styles.deleteAttachmentIcon}>🗑️</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.emptyText}>No attachments uploaded.</Text>
+                )}
+              </View>
+            </View>
+
+            {/* Comment Attachments Card */}
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardHeaderTitle}>
+                  📎 Comment Attachments ({commentAttachments.length})
+                </Text>
+              </View>
+              <View style={styles.cardBody}>
+                {commentAttachments.length > 0 ? (
+                  commentAttachments.map((att: any, idx: number) => {
+                    const isImg = att.url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(att.url);
+                    return (
                       <TouchableOpacity 
-                        key={idx} 
+                        key={`cmt_att_${idx}`} 
                         style={styles.attachmentItem}
                         activeOpacity={0.7}
                         onPress={() => {
@@ -648,7 +831,7 @@ export function ComplaintDetailScreen() {
                     );
                   })
                 ) : (
-                  <Text style={styles.emptyText}>No attachments uploaded.</Text>
+                  <Text style={styles.emptyText}>No comment attachments uploaded.</Text>
                 )}
               </View>
             </View>
@@ -923,14 +1106,25 @@ export function ComplaintDetailScreen() {
           <View style={styles.tabContent}>
             {/* Comment Input Area */}
             <View style={[styles.commentInputContainer, { marginBottom: 16, borderTopWidth: 0, borderRadius: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3 }]}>
-              {newCommentAttachment && (
-                <View style={styles.commentAttachmentPreview}>
-                  <Text style={styles.commentAttachmentPreviewText} numberOfLines={1}>{newCommentAttachment.name}</Text>
-                  <TouchableOpacity onPress={() => setNewCommentAttachment(null)}>
-                    <Text style={styles.commentAttachmentRemoveText}>✕</Text>
-                  </TouchableOpacity>
+              {newCommentAttachments.map((att, idx) => (
+                <View key={idx} style={[styles.commentAttachmentPreview, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={styles.commentAttachmentPreviewText} numberOfLines={1}>{att.file.name}</Text>
+                    <TouchableOpacity onPress={() => setNewCommentAttachments(prev => prev.filter((_, i) => i !== idx))}>
+                      <Text style={styles.commentAttachmentRemoveText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    style={[styles.commentInputField, { paddingVertical: 6, fontSize: 13, backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#e5e7eb' }]}
+                    placeholder="Enter description (max 20 chars)..."
+                    value={att.description}
+                    maxLength={20}
+                    onChangeText={(text) => {
+                      setNewCommentAttachments(prev => prev.map((p, i) => i === idx ? { ...p, description: text } : p));
+                    }}
+                  />
                 </View>
-              )}
+              ))}
               <View style={styles.commentInputRow}>
                 <TouchableOpacity style={styles.attachBtn} onPress={handlePickDocument}>
                   <Text style={styles.attachBtnText}>📎</Text>
@@ -944,9 +1138,9 @@ export function ComplaintDetailScreen() {
                   maxLength={500}
                 />
                 <TouchableOpacity 
-                  style={[styles.commentSendBtn, (!newCommentText.trim() && !newCommentAttachment) && { opacity: 0.5 }]} 
+                  style={[styles.commentSendBtn, (!newCommentText.trim() && newCommentAttachments.length === 0) && { opacity: 0.5 }]} 
                   onPress={handleAddComment}
-                  disabled={isSubmittingComment || (!newCommentText.trim() && !newCommentAttachment)}
+                  disabled={isSubmittingComment || (!newCommentText.trim() && newCommentAttachments.length === 0)}
                 >
                   {isSubmittingComment ? (
                     <ActivityIndicator size="small" color="#ffffff" />
@@ -968,8 +1162,40 @@ export function ComplaintDetailScreen() {
                       <Text style={styles.commentAuthor}>{comment.author}</Text>
                       <Text style={styles.commentDate}>{formatDate(comment.date)}</Text>
                     </View>
+                    {(isAdmin || comment.authorId === currentUserId) && editingCommentId !== comment.id && (
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity style={styles.editCommentBtn} onPress={() => handleEditComment(comment)}>
+                          <Text style={styles.editCommentText}>Edit</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
-                  <Text style={styles.commentText}>{comment.text}</Text>
+
+                  {editingCommentId === comment.id ? (
+                    <View style={{ marginTop: 8 }}>
+                      <TextInput
+                        style={[styles.commentInputField, { borderWidth: 1, borderColor: '#e5e7eb', marginBottom: 8 }]}
+                        value={editingCommentText}
+                        onChangeText={setEditingCommentText}
+                        multiline
+                        autoFocus
+                      />
+                      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                        <TouchableOpacity style={[styles.commentSendBtn, { backgroundColor: '#f3f4f6' }]} onPress={handleCancelEditComment} disabled={isUpdatingComment}>
+                          <Text style={[styles.commentSendBtnText, { color: '#4b5563' }]}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.commentSendBtn} onPress={() => handleUpdateComment(comment.id)} disabled={isUpdatingComment || !editingCommentText.trim()}>
+                          {isUpdatingComment ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text style={styles.commentSendBtnText}>Save</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.commentText}>{comment.text}</Text>
+                  )}
                   
                   {/* Render Comment Attachments */}
                   {comment.attachments && comment.attachments.length > 0 && (
@@ -978,22 +1204,38 @@ export function ComplaintDetailScreen() {
                         const url = att.storagePath || att.url || att.storedFileName;
                         const isImg = url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(url);
                         return (
-                          <TouchableOpacity 
-                            key={attIdx} 
-                            style={styles.commentAttachmentItem}
-                            activeOpacity={0.7}
-                            onPress={() => {
-                              if (url) {
-                                if (isImg) setSelectedImage(url);
-                                else Linking.openURL(url);
-                              }
-                            }}
-                          >
-                            <Text style={styles.commentAttachmentIcon}>📎</Text>
-                            <Text style={styles.commentAttachmentName} numberOfLines={1}>
-                              {att.fileName || `Attachment ${attIdx + 1}`}
-                            </Text>
-                          </TouchableOpacity>
+                          <View key={attIdx} style={[styles.commentAttachmentItem, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 10 }]}>
+                            <TouchableOpacity 
+                              style={{ flexDirection: 'column', flex: 1, paddingVertical: 4 }}
+                              activeOpacity={0.7}
+                              onPress={() => {
+                                if (url) {
+                                  if (isImg) setSelectedImage(url);
+                                  else Linking.openURL(url);
+                                }
+                              }}
+                            >
+                              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Text style={styles.commentAttachmentIcon}>📎</Text>
+                                <Text style={styles.commentAttachmentName} numberOfLines={1}>
+                                  {att.fileName || `Attachment ${attIdx + 1}`}
+                                </Text>
+                              </View>
+                              {!!att.description && (
+                                <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2, paddingLeft: 22 }} numberOfLines={2}>
+                                  {att.description}
+                                </Text>
+                              )}
+                            </TouchableOpacity>
+                            {(isAdmin || comment.authorId === currentUserId) && (
+                              <TouchableOpacity 
+                                style={styles.deleteAttachmentBtn} 
+                                onPress={() => handleDeleteCommentAttachment(comment.id, att.id, att.fileName || `Attachment ${attIdx + 1}`)}
+                              >
+                                <Text style={styles.deleteAttachmentIcon}>🗑️</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         );
                       })}
                     </View>
@@ -1425,6 +1667,7 @@ const styles = StyleSheet.create({
   },
   tabButton: {
     flex: 1,
+    paddingHorizontal: 2,
     paddingVertical: 10,
     alignItems: 'center',
     borderRadius: 8,
@@ -1438,7 +1681,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   tabText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#6b7280',
   },
@@ -1775,7 +2018,35 @@ const styles = StyleSheet.create({
   },
   commentDate: {
     fontSize: 12,
-    color: '#6b7280',
+    color: '#94a3b8',
+  },
+  editCommentBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: '#eff6ff',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  editCommentText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563eb',
+    textTransform: 'uppercase',
+  },
+  deleteAttachmentBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: '#fef2f2',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteAttachmentIcon: {
+    fontSize: 16,
+    color: '#ef4444',
   },
   commentText: {
     fontSize: 14,

@@ -12,12 +12,16 @@ export type RootStackParamList = {
   Login: undefined;
   Dashboard: undefined;
   ComplaintDetail: { complaintNumber: string };
+  Profile: undefined;
+  ChangePassword: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 import { DashboardScreen } from '../screens/dashboard/DashboardScreen';
 import { ComplaintDetailScreen } from '../screens/dashboard/ComplaintDetailScreen';
+import { ProfileScreen } from '../screens/user/ProfileScreen';
+import { ChangePasswordScreen } from '../screens/user/ChangePasswordScreen';
 
 // ─── Navigator ───────────────────────────────────────────────────────────────
 
@@ -55,6 +59,8 @@ export function AppNavigator() {
           <>
             <Stack.Screen name="Dashboard" component={DashboardScreen} />
             <Stack.Screen name="ComplaintDetail" component={ComplaintDetailScreen} />
+            <Stack.Screen name="Profile" component={ProfileScreen} />
+            <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
           </>
         ) : (
           <Stack.Screen name="Login">

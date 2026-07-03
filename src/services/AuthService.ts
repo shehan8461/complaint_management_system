@@ -58,6 +58,22 @@ export const AuthService = {
   },
 
   /**
+   * Refresh Token — manual refresh if needed outside interceptor
+   * POST /auth/login/refresh-token
+   */
+  async refreshToken(): Promise<{ token: string; expiration: string }> {
+    const response = await ApiService.post<LoginResponse>('/auth/login/refresh-token', {});
+    const { token, expiration } = response.data;
+    
+    await SessionStorage.setToken(token);
+    if (expiration) {
+      await SessionStorage.setTokenExpiry(new Date(expiration).toISOString());
+    }
+    
+    return { token, expiration };
+  },
+
+  /**
    * Logout — mirrors AuthService.logout()
    */
   async logout(): Promise<void> {

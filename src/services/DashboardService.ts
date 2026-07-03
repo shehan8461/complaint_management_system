@@ -155,16 +155,19 @@ export const DashboardService = {
       attachments: (source.attachments || source.Attachments || []).map((a: any) => ({
         id: a.id || a.Id,
         fileName: a.fileName || a.FileName || 'Attachment',
+        description: a.description || a.Description || null,
         url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || a.storagePath || a.StoragePath || a.storedFileName || a.StoredFileName || ''),
       })),
       comments: (source.comments || source.Comments || []).map((c: any) => ({
         id: c.id || c.Id,
         text: c.commentText || c.CommentText || '',
         author: c.commentedByUserName || c.CommentedByUserName || 'Unknown User',
+        authorId: c.commentedByUserId || c.CommentedByUserId,
         date: c.commentedAt || c.CommentedAt || source.createdAt || source.CreatedAt,
         attachments: (c.attachments || c.Attachments || []).map((a: any) => ({
           id: a.id || a.Id,
           fileName: a.fileName || a.FileName || 'Attachment',
+          description: a.description || a.Description || null,
           url: getAttachmentUrl(a.url || a.Url || a.filePath || a.FilePath || a.storagePath || a.StoragePath || a.storedFileName || a.StoredFileName || ''),
         })),
       })),
@@ -253,7 +256,7 @@ export const DashboardService = {
    * Update complaint status (e.g. resolve)
    */
   async updateComplaintStatus(id: number, payload: { status: number; remarks?: string; resolutionSummary?: string; feedbackRating?: number | null; feedbackComment?: string | null }): Promise<void> {
-    await ApiService.put<any>(`/cms/complaints/${id}/status`, payload);
+    await ApiService.post<any>(`/cms/complaints/${id}/status`, payload);
   },
 
   /**
@@ -300,6 +303,30 @@ export const DashboardService = {
 
     const response = await ApiService.post<any>(`/cms/complaints/${id}/comments`, requestPayload);
     return response.data?.data || response.data;
+  },
+
+  /**
+   * Update a comment on a complaint
+   */
+  async updateComment(complaintId: number, commentId: number, payload: { commentText: string }): Promise<any> {
+    const response = await ApiService.put<any>(`/cms/complaints/${complaintId}/comments/${commentId}`, {
+      commentText: payload.commentText
+    });
+    return response.data?.data || response.data;
+  },
+
+  /**
+   * Delete a complaint attachment
+   */
+  async deleteComplaintAttachment(complaintId: number, attachmentId: number): Promise<void> {
+    await ApiService.delete(`/cms/complaints/${complaintId}/attachments/${attachmentId}`);
+  },
+
+  /**
+   * Delete a comment attachment
+   */
+  async deleteCommentAttachment(complaintId: number, commentId: number, attachmentId: number): Promise<void> {
+    await ApiService.delete(`/cms/complaints/${complaintId}/comments/${commentId}/attachments/${attachmentId}`);
   },
 
   /**
