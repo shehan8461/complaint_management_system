@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, ActivityIndicator, StatusBar, Image, TextInput, Alert, DeviceEventEmitter } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { pick, types, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
+import Toast from 'react-native-toast-message';
 import { AuthService, UserModel } from '../../services/AuthService';
 import { UserService } from '../../services/UserService';
 
@@ -85,9 +86,15 @@ export function ProfileScreen() {
 
   const normalisePhone = (val: string, forceDigits: boolean) => {
     let digits = (val || '').replace(/\D/g, '');
-    if (digits.startsWith('94') && digits.length === 11) digits = '0' + digits.slice(2);
-    if (digits.length === 9) digits = '0' + digits;
-    if (forceDigits) return digits;
+    
+    if (digits.startsWith('94') && digits.length >= 11) {
+      digits = '0' + digits.slice(2);
+    }
+    
+    if (forceDigits) {
+      if (digits.length === 9) digits = '0' + digits;
+      return digits;
+    }
     return digits.slice(0, 10);
   };
 
@@ -151,7 +158,11 @@ export function ProfileScreen() {
 
         try {
           await UserService.uploadUserImage(Number(user.id), file.uri, file.name || 'profile.jpg', file.type || 'image/jpeg');
-          Alert.alert('Success', 'Profile picture updated successfully.');
+          Toast.show({
+            type: 'success',
+            text1: 'Success',
+            text2: 'Profile picture updated successfully.'
+          });
           await fetchProfile();
         } catch (err: any) {
           setUser(prev => prev ? { ...prev, profilePicPath: prevImage } : null);
@@ -214,7 +225,11 @@ export function ProfileScreen() {
       // Wait for it and refresh data
       await fetchProfile();
       setIsEditMode(false);
-      Alert.alert('Success', 'Profile updated successfully.');
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Profile updated successfully.'
+      });
       DeviceEventEmitter.emit('PROFILE_UPDATED');
     } catch (error: any) {
       Alert.alert('Error', error.response?.data?.message || 'Failed to save profile.');

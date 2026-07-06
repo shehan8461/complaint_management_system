@@ -19,7 +19,20 @@ export function ChangePasswordScreen() {
   const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
-    AuthService.getMe().then(setUser).catch(console.error);
+    const fetchUser = async () => {
+      try {
+        const authData = await AuthService.getMe();
+        if (authData?.id) {
+          const fullProfile = await UserService.getUserById(Number(authData.id));
+          setUser({ ...authData, ...fullProfile });
+        } else {
+          setUser(authData);
+        }
+      } catch (err) {
+        console.error('Failed to load profile for password change:', err);
+      }
+    };
+    fetchUser();
   }, []);
 
   const getPasswordRequirements = () => {
@@ -83,7 +96,7 @@ export function ChangePasswordScreen() {
       
       const payload = {
         ID: Number(user.id),
-        NameInFull: user.fullName || '',
+        NameInFull: user.nameInFull || user.fullName || '',
         NameWithInitials: user.nameWithInitials || user.fullName || '',
         Username: user.username,
         Password: newPassword,

@@ -17,6 +17,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { pick, types, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import Toast from 'react-native-toast-message';
 import { DashboardService, CMSComplaintDetail, CMSUser, CMSDepartment } from '../../services/DashboardService';
 import { AuthService } from '../../services/AuthService';
 
@@ -251,7 +252,11 @@ export function ComplaintDetailScreen() {
         attachments,
       });
 
-      Alert.alert('Success', 'Comment added successfully.');
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Comment added successfully.'
+      });
       setNewCommentText('');
       setNewCommentAttachments([]);
       if (complaintNumber) fetchDetails(complaintNumber);
@@ -375,7 +380,11 @@ export function ComplaintDetailScreen() {
         attachments,
       });
 
-      Alert.alert('Success', 'Message sent successfully.');
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Message sent successfully.'
+      });
       setNewContactMessage('');
       setNewContactAttachment(null);
       setNotifyByEmail(false);
@@ -426,7 +435,11 @@ export function ComplaintDetailScreen() {
         resolutionDueAt: resolutionDate + 'T23:59:59',
       });
       
-      Alert.alert('Success', `Complaint successfully ${isReassignment ? 'reassigned' : 'assigned'} to Department Head.`);
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: `Complaint successfully ${isReassignment ? 'reassigned' : 'assigned'} to Department Head.`
+      });
       setShowAssignModal(false);
       
       // Refresh complaint details
@@ -454,7 +467,11 @@ export function ComplaintDetailScreen() {
           remarks: reviewRemarks,
           resolutionSummary: reviewRemarks
         });
-        Alert.alert('Success', 'Complaint successfully reviewed and resolved.');
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Complaint successfully reviewed and resolved.'
+        });
       } else {
         // Disapprove Logic
         const assignments = complaint?.assignments || [];
@@ -475,7 +492,11 @@ export function ComplaintDetailScreen() {
           remarks: `Admin disapproved: ${reviewRemarks}`,
           isReassignment: true,
         });
-        Alert.alert('Success', 'Complaint disapproved and returned to Department Head.');
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Complaint disapproved and returned to Department Head.'
+        });
       }
       
       setShowReviewModal(false);
