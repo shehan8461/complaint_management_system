@@ -609,7 +609,6 @@ export function DashboardScreen() {
               <View style={styles.drawerProfileRow}>
                 <View style={styles.drawerProfileTextWrap}>
                   <Text style={styles.drawerProfileName}>{userEmail.split('@')[0] || 'Juan Dela Cruz'}</Text>
-                  <Text style={styles.drawerProfileRole}>Department Head</Text>
                   <Text style={styles.drawerProfileOnline}>🟢 Online</Text>
                 </View>
               </View>

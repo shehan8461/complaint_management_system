@@ -130,7 +130,11 @@ export function ChangePasswordScreen() {
       );
 
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || error.message || 'Failed to update password.');
+      if (error.response?.status === 404) {
+        Alert.alert('Error', 'Cannot reuse last 5 passwords');
+      } else {
+        Alert.alert('Error', error.response?.data?.message || error.message || 'Failed to update password.');
+      }
     } finally {
       setIsSubmitting(false);
     }

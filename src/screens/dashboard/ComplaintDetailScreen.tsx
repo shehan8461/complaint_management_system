@@ -15,6 +15,7 @@ import {
   Alert,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
 import { pick, types, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
@@ -223,6 +224,17 @@ export function ComplaintDetailScreen() {
 
   const handleAddComment = async () => {
     if (!newCommentText.trim() && newCommentAttachments.length === 0) return;
+    
+    // Validate that all attachments have a description
+    const hasEmptyDescriptions = newCommentAttachments.some(att => !att.description || !att.description.trim());
+    if (hasEmptyDescriptions) {
+      Toast.show({
+        type: 'error',
+        text1: 'Required',
+        text2: 'Please add a note/description for all attached files.'
+      });
+      return;
+    }
     
     try {
       setIsSubmittingComment(true);
@@ -530,7 +542,7 @@ export function ComplaintDetailScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#0B2046" />
+        <ActivityIndicator size="large" color="#1B84FF" />
         <Text style={styles.loadingText}>Loading details...</Text>
       </SafeAreaView>
     );
@@ -586,7 +598,7 @@ export function ComplaintDetailScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B2046" />
+      <StatusBar barStyle="light-content" backgroundColor="#1B84FF" />
       
       {/* Header */}
       <View style={styles.header}>
@@ -700,26 +712,6 @@ export function ComplaintDetailScreen() {
                   </View>
                 </View>
                 
-                {(complaint.reporterMobile || complaint.reporterEmail) && (
-                  <View style={{ marginTop: 24, flexDirection: 'row', justifyContent: 'space-between' }}>
-                    {complaint.reporterMobile ? (
-                      <TouchableOpacity 
-                        style={[styles.submitAssignBtn, { flex: 1, backgroundColor: '#0B2046', paddingVertical: 12, borderRadius: 8, marginRight: complaint.reporterEmail ? 8 : 0 }]}
-                        onPress={() => Linking.openURL(`tel:${complaint.reporterMobile}`)}
-                      >
-                        <Text style={[styles.submitAssignBtnText, { fontSize: 13 }]}>📞 Call Reporter</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                    {complaint.reporterEmail ? (
-                      <TouchableOpacity 
-                        style={[styles.submitAssignBtn, { flex: 1, backgroundColor: '#0ea5e9', paddingVertical: 12, borderRadius: 8, marginLeft: complaint.reporterMobile ? 8 : 0 }]}
-                        onPress={() => Linking.openURL(`mailto:${complaint.reporterEmail}`)}
-                      >
-                        <Text style={[styles.submitAssignBtnText, { fontSize: 13 }]}>✉️ Email Reporter</Text>
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                )}
               </View>
             </View>
 
@@ -743,6 +735,42 @@ export function ComplaintDetailScreen() {
                         </View>
                       </View>
                       <Text style={styles.commentText}>{comment.text}</Text>
+                      
+                      {/* Render Comment Attachments in Overview */}
+                      {comment.attachments && comment.attachments.length > 0 && (
+                        <View style={styles.commentAttachmentsContainer}>
+                          {comment.attachments.map((att: any, attIdx: number) => {
+                            const url = att.storagePath || att.url || att.storedFileName;
+                            const isImg = url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(url);
+                            return (
+                              <View key={attIdx} style={[styles.commentAttachmentItem, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 10 }]}>
+                                <TouchableOpacity 
+                                  style={{ flexDirection: 'column', flex: 1, paddingVertical: 4 }}
+                                  activeOpacity={0.7}
+                                  onPress={() => {
+                                    if (url) {
+                                      if (isImg) setSelectedImage(url);
+                                      else Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
+                                    }
+                                  }}
+                                >
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <Text style={styles.commentAttachmentIcon}>📎</Text>
+                                    <Text style={styles.commentAttachmentName} numberOfLines={1}>
+                                      {att.fileName || `Attachment ${attIdx + 1}`}
+                                    </Text>
+                                  </View>
+                                  {!!att.description && (
+                                    <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2, paddingLeft: 22 }} numberOfLines={2}>
+                                      {att.description}
+                                    </Text>
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
                     </View>
                   ))
                 ) : (
@@ -812,50 +840,6 @@ export function ComplaintDetailScreen() {
               </View>
             </View>
 
-            {/* Comment Attachments Card */}
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardHeaderTitle}>
-                  📎 Comment Attachments ({commentAttachments.length})
-                </Text>
-              </View>
-              <View style={styles.cardBody}>
-                {commentAttachments.length > 0 ? (
-                  commentAttachments.map((att: any, idx: number) => {
-                    const isImg = att.url && /\.(jpeg|jpg|gif|png|webp|bmp)$/i.test(att.url);
-                    return (
-                      <TouchableOpacity 
-                        key={`cmt_att_${idx}`} 
-                        style={styles.attachmentItem}
-                        activeOpacity={0.7}
-                        onPress={() => {
-                          if (att.url) {
-                            if (isImg) {
-                              setSelectedImage(att.url);
-                            } else {
-                              Linking.openURL(att.url).catch(err => console.error("Couldn't load page", err));
-                            }
-                          }
-                        }}
-                      >
-                        {isImg ? (
-                          <Image source={{ uri: att.url }} style={styles.attachmentPreview} resizeMode="cover" />
-                        ) : (
-                          <View style={styles.attachmentIcon}>
-                            <Text style={styles.attachmentIconText}>📎</Text>
-                          </View>
-                        )}
-                        <Text style={styles.attachmentName} numberOfLines={1}>
-                          {att.fileName || `Attachment ${idx + 1}`}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  <Text style={styles.emptyText}>No comment attachments uploaded.</Text>
-                )}
-              </View>
-            </View>
 
             {/* Action Row for Assignments */}
             {(isAdmin && (complaint.status === 1 || complaint.status === 5)) && (
@@ -972,9 +956,16 @@ export function ComplaintDetailScreen() {
                                   <Text style={{fontSize: 12}}>📎</Text>
                                 </View>
                               )}
-                              <Text style={styles.tlAttachmentName} numberOfLines={1}>
-                                {att.fileName || `Attachment ${idx + 1}`}
-                              </Text>
+                              <View style={{ flex: 1, justifyContent: 'center' }}>
+                                <Text style={styles.tlAttachmentName} numberOfLines={1}>
+                                  {att.fileName || `Attachment ${idx + 1}`}
+                                </Text>
+                                {!!att.description && (
+                                  <Text style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }} numberOfLines={2}>
+                                    {att.description}
+                                  </Text>
+                                )}
+                              </View>
                             </TouchableOpacity>
                           );
                         })}
@@ -1031,7 +1022,7 @@ export function ComplaintDetailScreen() {
                     style={{ flexDirection: 'row', alignItems: 'center', opacity: complaint.reporterEmail ? 1 : 0.5 }}
                     disabled={!complaint.reporterEmail}
                   >
-                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: '#0B2046', alignItems: 'center', justifyContent: 'center', marginRight: 6, backgroundColor: notifyByEmail ? '#0B2046' : 'transparent' }}>
+                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: '#1B84FF', alignItems: 'center', justifyContent: 'center', marginRight: 6, backgroundColor: notifyByEmail ? '#1B84FF' : 'transparent' }}>
                       {notifyByEmail && <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>✓</Text>}
                     </View>
                     <Text style={{ fontSize: 13, color: '#374151', fontWeight: '500' }}>Email</Text>
@@ -1042,7 +1033,7 @@ export function ComplaintDetailScreen() {
                     style={{ flexDirection: 'row', alignItems: 'center', opacity: complaint.reporterMobile ? 1 : 0.5 }}
                     disabled={!complaint.reporterMobile}
                   >
-                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: '#0B2046', alignItems: 'center', justifyContent: 'center', marginRight: 6, backgroundColor: notifyBySms ? '#0B2046' : 'transparent' }}>
+                    <View style={{ width: 18, height: 18, borderRadius: 4, borderWidth: 1, borderColor: '#1B84FF', alignItems: 'center', justifyContent: 'center', marginRight: 6, backgroundColor: notifyBySms ? '#1B84FF' : 'transparent' }}>
                       {notifyBySms && <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>✓</Text>}
                     </View>
                     <Text style={{ fontSize: 13, color: '#374151', fontWeight: '500' }}>SMS</Text>
@@ -1298,36 +1289,25 @@ export function ComplaintDetailScreen() {
               
               {/* Department Selection */}
               <Text style={styles.inputLabel}>Select Department <Text style={{color: '#ef4444'}}>*</Text></Text>
-              <View style={styles.headListContainer}>
+              <View style={[styles.textInput, { padding: 0, overflow: 'hidden', backgroundColor: '#f9fafb' }]}>
                 {departments.length === 0 ? (
-                  <ActivityIndicator size="small" color="#0B2046" style={{ padding: 10 }} />
+                  <ActivityIndicator size="small" color="#1B84FF" style={{ padding: 14 }} />
                 ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{flexDirection: 'row', paddingBottom: 10}}>
+                  <Picker
+                    selectedValue={selectedDeptId}
+                    onValueChange={(itemValue) => {
+                      setSelectedDeptId(itemValue);
+                      setSelectedDeptHead(null); // Reset head selection
+                    }}
+                    style={{ height: 50, width: '100%' }}
+                    dropdownIconColor="#1B84FF"
+                    mode="dropdown"
+                  >
+                    <Picker.Item label="Select Department..." value={null} color="#6b7280" />
                     {departments.map(dept => (
-                      <TouchableOpacity 
-                        key={dept.id} 
-                        style={[
-                          styles.headItemButton,
-                          { marginRight: 8, marginBottom: 0, alignSelf: 'flex-start' },
-                          selectedDeptId === dept.id && styles.headItemButtonActive
-                        ]}
-                        onPress={() => {
-                          setSelectedDeptId(dept.id);
-                          setSelectedDeptHead(null); // Reset head selection
-                        }}
-                      >
-                        <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                          <Image source={{ uri: 'https://img.icons8.com/ios-filled/50/0B2046/building.png' }} style={{ width: 16, height: 16, marginRight: 6 }} />
-                          <Text style={[
-                            styles.headItemText,
-                            selectedDeptId === dept.id && styles.headItemTextActive
-                          ]}>
-                            {dept.department}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
+                      <Picker.Item key={dept.id} label={dept.department} value={dept.id} color="#111827" />
                     ))}
-                  </ScrollView>
+                  </Picker>
                 )}
               </View>
 
@@ -1526,7 +1506,7 @@ export function ComplaintDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B2046',
+    backgroundColor: '#1B84FF',
   },
   mainContent: {
     flex: 1,
@@ -1556,7 +1536,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   backButtonText: {
-    color: '#0B2046',
+    color: '#1B84FF',
     fontWeight: '600',
     fontSize: 15,
   },
@@ -1565,7 +1545,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 16,
-    backgroundColor: '#0B2046',
+    backgroundColor: '#1B84FF',
     elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -1617,7 +1597,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   numberBadgeText: {
-    color: '#0B2046',
+    color: '#1B84FF',
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1707,7 +1687,7 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   tabTextActive: {
-    color: '#0B2046',
+    color: '#1B84FF',
   },
   tabContent: {
     gap: 20,
@@ -2079,13 +2059,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   assignButtonPrimary: {
-    backgroundColor: '#0B2046',
+    backgroundColor: '#1B84FF',
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#0B2046',
+    shadowColor: '#1B84FF',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -2148,7 +2128,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   headItemButtonActive: {
-    borderColor: '#0B2046',
+    borderColor: '#1B84FF',
     backgroundColor: '#eff6ff',
   },
   headItemText: {

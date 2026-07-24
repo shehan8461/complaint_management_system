@@ -241,7 +241,7 @@ export function ProfileScreen() {
   const renderEditableRow = (label: string, value: string, onChange: (t:string) => void, keyboardType: any = 'default', editable: boolean = true, icon: string) => (
     <View style={styles.editableRow}>
       <View style={styles.iconCircle}>
-        <Text style={styles.iconEmoji}>{icon}</Text>
+        <Text style={[styles.iconEmoji, icon === '✎' && { transform: [{ scaleX: -1 }] }]}>{icon}</Text>
       </View>
       <View style={styles.editableTextContainer}>
         <Text style={styles.editLabel}>{label}</Text>
@@ -261,7 +261,7 @@ export function ProfileScreen() {
   const renderInfoRow = (label: string, value: string | undefined, icon: string) => (
     <View style={styles.infoRow}>
       <View style={styles.iconCircle}>
-        <Text style={styles.iconEmoji}>{icon}</Text>
+        <Text style={[styles.iconEmoji, icon === '✎' && { transform: [{ scaleX: -1 }] }]}>{icon}</Text>
       </View>
       <View style={styles.infoTextContainer}>
         <Text style={styles.infoLabel}>{label}</Text>
@@ -349,7 +349,7 @@ export function ProfileScreen() {
                 </View>
               ) : (
                 <TouchableOpacity style={styles.avatarEditBtn} onPress={handlePickImage}>
-                  <Text style={styles.avatarEditIcon}>✎</Text>
+                  <Text style={[styles.avatarEditIcon, { transform: [{ scaleX: -1 }] }]}>✎</Text>
                 </TouchableOpacity>
               )}
             </View>
