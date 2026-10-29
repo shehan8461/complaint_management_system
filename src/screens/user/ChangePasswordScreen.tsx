@@ -130,10 +130,37 @@ export function ChangePasswordScreen() {
       );
 
     } catch (error: any) {
-      if (error.response?.status === 404) {
+      // Extract error message from backend
+      let errorMessage = 'Failed to update password.';
+      const data = error.response?.data;
+      
+      if (typeof data === 'string' && data.length > 0) {
+        errorMessage = data;
+      } else if (data?.message && typeof data.message === 'string') {
+        errorMessage = data.message;
+      } else if (data && typeof data === 'object') {
+        const messages: string[] = [];
+        Object.values(data).forEach((entry: any) => {
+          if (typeof entry === 'string') messages.push(entry);
+          else if (Array.isArray(entry)) {
+            entry.forEach((item: any) => {
+              if (typeof item === 'string') messages.push(item);
+              else if (item?.description) messages.push(item.description);
+            });
+          } else if (entry?.description) {
+            messages.push(entry.description);
+          }
+        });
+        if (messages.length > 0) errorMessage = messages.join('\n');
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      // Check for specific reuse error or fallback
+      if (errorMessage.toLowerCase().includes('reuse') || errorMessage.toLowerCase().includes('404')) {
         Alert.alert('Error', 'Cannot reuse last 5 passwords');
       } else {
-        Alert.alert('Error', error.response?.data?.message || error.message || 'Failed to update password.');
+        Alert.alert('Error', errorMessage);
       }
     } finally {
       setIsSubmitting(false);
